@@ -43,31 +43,60 @@
 //! ```
 use std::collections::HashMap;
 use std::error::Error;
+use std::fs;
 
-use lsp_types::OneOf;
 use lsp_types::{
     request::GotoDefinition, GotoDefinitionResponse, InitializeParams, ServerCapabilities,
 };
+use lsp_types::{GotoDefinitionParams, Location, OneOf, Position, Range, Url};
 
-use tree_sitter::{Node, Parser, Point};
+use tree_sitter::{Node, Parser, Point, Tree};
 
 use lsp_server::{Connection, ExtractError, Message, Request, RequestId, Response};
 
-fn node_to_identifier(code: String, i: Node) -> (String, Point) {
+fn node_to_identifier(code: String, i: Node) -> Option<(String, Point)> {
     let icrsr = &mut i.walk();
     let icidx = i.named_children(icrsr);
     let fid = icidx
         .filter(|i| i.kind() == "identifier")
         .map(|i| (&code[i.byte_range()], i.range().start_point))
         .map(|(k, v)| (k.to_string(), v));
-    return fid.last().unwrap_or_default();
+    fid.last()
 }
 
 fn node_functions(code: String, node: Node) -> HashMap<String, Point> {
     let rcrsr = &mut node.walk();
     let crsr = node.named_children(rcrsr);
-    let ffuncimpl = crsr.filter(|i| i.kind() == "func_impl").map(|i| node_to_identifier(code.clone(), i));
-    return ffuncimpl.collect();
+    let ffuncimpl = crsr
+        .filter(|i| i.kind() == "func_impl")
+        .map(|i| node_to_identifier(code.clone(), i).unwrap_or_default());
+    ffuncimpl.collect()
+}
+
+fn parse_file(mut parser: Parser, url: Url) -> (String, Tree) {
+    let code: String =
+        fs::read_to_string(url.path()).expect("Something went wrong reading the file");
+    let parsed = parser.parse(code.clone(), None).unwrap();
+    (code, parsed)
+}
+
+fn identifier_in_posiion(
+    code: String,
+    node: Node,
+    params: GotoDefinitionParams,
+) -> Option<(String, Point)> {
+    let rcrsr = &mut node.walk();
+    let pos = params.text_document_position_params.position.line as f32
+        + params.text_document_position_params.position.character as f32 / 100.0;
+    for i in node.children(rcrsr) {
+        let sp = i.range().start_point.row as f32 + i.range().start_point.column as f32 / 100.0;
+        let ep = i.range().end_point.row as f32 + i.range().end_point.column as f32 / 100.0;
+        if pos >= sp && pos <= ep {
+            // in here check if cursor sits on an identifier
+            return node_to_identifier(code, i);
+        }
+    }
+    None
 }
 
 fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
@@ -82,10 +111,10 @@ fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
     parser
         .set_language(tree_sitter_nasl::language())
         .expect("Error loading NASL grammar");
+
     let parsed = parser.parse(code, None).unwrap();
     let fhm = node_functions(code.to_string(), parsed.root_node());
     eprintln!("{:?}", fhm);
-
 
     //println!("{:#?}", parsed.root_node().to_sexp());
 
@@ -115,17 +144,56 @@ fn main_loop(
     let _params: InitializeParams = serde_json::from_value(params).unwrap();
     eprintln!("starting example main loop");
     for msg in &connection.receiver {
-        eprintln!("got msg: {:?}", msg);
         match msg {
             Message::Request(req) => {
                 if connection.handle_shutdown(&req)? {
                     return Ok(());
                 }
-                eprintln!("got request: {:?}", req);
+
                 match cast::<GotoDefinition>(req) {
                     Ok((id, params)) => {
-                        eprintln!("got gotoDefinition request #{}: {:?}", id, params);
-                        let result = Some(GotoDefinitionResponse::Array(Vec::new()));
+                        //params.text_document_position_params.text_document.uri
+                        // load file
+                        let mut parser = Parser::new();
+                        parser
+                            .set_language(tree_sitter_nasl::language())
+                            .expect("Error loading NASL grammar");
+                        // add cache lookup for previous tree
+                        let (code, tree) = parse_file(
+                            parser,
+                            params
+                                .clone()
+                                .text_document_position_params
+                                .text_document
+                                .uri,
+                        );
+                        let fhm = node_functions(code.clone(), tree.root_node());
+                        let idpos = identifier_in_posiion(code, tree.root_node(), params.clone());
+                        let found = {
+                            match idpos.map(|(id, _)| fhm.get(&id)) {
+                                Some(x) => x,
+                                None => None,
+                            }
+                        }
+                        .map(|p| Location {
+                            range: Range {
+                                start: Position {
+                                    line: p.row as u32,
+                                    character: p.column as u32,
+                                },
+                                end: Position {
+                                    line: p.row as u32,
+                                    character: p.column as u32,
+                                },
+                            },
+                            uri: params.text_document_position_params.text_document.uri,
+                        });
+                        let result: Vec<Location> = match found {
+                            Some(x) => vec![x],
+                            None => vec![],
+                        };
+
+                        let result = Some(GotoDefinitionResponse::Array(result));
                         let result = serde_json::to_value(&result).unwrap();
                         let resp = Response {
                             id,
