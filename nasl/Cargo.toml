@@ -7,4 +7,4 @@ edition = "2021"
 
 [dependencies]
 tree-sitter = "0.20"
-tree-sitter-nasl = { path = "../../tree-sitter-nasl"}
+tree-sitter-nasl = "0.0.1"

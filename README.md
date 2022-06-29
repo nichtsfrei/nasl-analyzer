@@ -11,8 +11,6 @@ Next steps:
 - make GotoDefinition work for local scopes (e.g. in blocks, parameter_lists, etc)
 - continue for more functions than GotoDefinition
 
-Since it is based on [tree-sitter-nasl](https://github.com/nichtsfrei/tree-sitter-nasl) which isn;t registered yet it assumes that it is within: `../nasl-tree-sitter`.
-
 ## Include into neovim
 
 In this example I assume that you have 
