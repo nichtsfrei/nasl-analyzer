@@ -3,7 +3,7 @@ use std::{collections::HashMap, fs};
 use tree_sitter::{Node, Parser, Point, Tree};
 
 pub struct Interpret {
-    path: String,
+//    path: String,
     code: String,
     tree: Tree,
     definition: HashMap<String, Point>, // stores file global
@@ -76,10 +76,10 @@ fn find_identifier(pos: f32, code: &str, n: &Node<'_>) -> Option<String> {
     None
 }
 
-pub fn new(path: String, code: String) -> Interpret {
+pub fn new(_: String, code: String) -> Interpret {
     let tree = tree(code.clone(), None);
     Interpret {
-        path,
+        //path,
         code: code.clone(),
         tree: tree.clone(),
         definition: node_functions(&code, &tree.root_node()),
