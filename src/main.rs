@@ -41,83 +41,21 @@
 //!
 //! {"jsonrpc": "2.0", "method": "exit", "params": null}
 //! ```
-use std::collections::HashMap;
 use std::error::Error;
-use std::fs;
 
 use lsp_types::{
     request::GotoDefinition, GotoDefinitionResponse, InitializeParams, ServerCapabilities,
 };
-use lsp_types::{GotoDefinitionParams, Location, OneOf, Position, Range, Url};
+use lsp_types::{Location, OneOf, Position, Range};
 
-use tree_sitter::{Node, Parser, Point, Tree};
+use tree_sitter::Point;
+
 
 use lsp_server::{Connection, ExtractError, Message, Request, RequestId, Response};
-
-fn node_to_identifier(code: String, i: Node) -> Option<(String, Point)> {
-    let icrsr = &mut i.walk();
-    let icidx = i.named_children(icrsr);
-    let fid = icidx
-        .filter(|i| i.kind() == "identifier")
-        .map(|i| (&code[i.byte_range()], i.range().start_point))
-        .map(|(k, v)| (k.to_string(), v));
-    fid.last()
-}
-
-fn node_functions(code: String, node: Node) -> HashMap<String, Point> {
-    let rcrsr = &mut node.walk();
-    let crsr = node.named_children(rcrsr);
-    let ffuncimpl = crsr
-        .filter(|i| i.kind() == "func_impl")
-        .map(|i| node_to_identifier(code.clone(), i).unwrap_or_default());
-    ffuncimpl.collect()
-}
-
-fn parse_file(mut parser: Parser, url: Url) -> (String, Tree) {
-    let code: String =
-        fs::read_to_string(url.path()).expect("Something went wrong reading the file");
-    let parsed = parser.parse(code.clone(), None).unwrap();
-    (code, parsed)
-}
-
-fn identifier_in_posiion(
-    code: String,
-    node: Node,
-    params: GotoDefinitionParams,
-) -> Option<(String, Point)> {
-    let rcrsr = &mut node.walk();
-    let pos = params.text_document_position_params.position.line as f32
-        + params.text_document_position_params.position.character as f32 / 100.0;
-    for i in node.children(rcrsr) {
-        let sp = i.range().start_point.row as f32 + i.range().start_point.column as f32 / 100.0;
-        let ep = i.range().end_point.row as f32 + i.range().end_point.column as f32 / 100.0;
-        if pos >= sp && pos <= ep {
-            // in here check if cursor sits on an identifier
-            return node_to_identifier(code, i);
-        }
-    }
-    None
-}
 
 fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
     // Note that  we must have our logging only write out to stderr.
     eprintln!("starting generic LSP server");
-    let code = r#"
-        function test(a){
-            return 3;
-        }
-    "#;
-    let mut parser = Parser::new();
-    parser
-        .set_language(tree_sitter_nasl::language())
-        .expect("Error loading NASL grammar");
-
-    let parsed = parser.parse(code, None).unwrap();
-    let fhm = node_functions(code.to_string(), parsed.root_node());
-    eprintln!("{:?}", fhm);
-
-    //println!("{:#?}", parsed.root_node().to_sexp());
-
     // Create the transport. Includes the stdio (stdin and stdout) versions but this could
     // also be implemented to use sockets or HTTP.
     let (connection, io_threads) = Connection::stdio();
@@ -137,6 +75,25 @@ fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
     Ok(())
 }
 
+trait AsRange {
+    fn as_range(&self) -> Range;
+}
+
+impl AsRange for Point {
+    fn as_range(&self) -> Range {
+        Range {
+            start: Position {
+                line: self.row as u32,
+                character: self.column as u32,
+            },
+            end: Position {
+                line: self.row as u32,
+                character: self.column as u32,
+            },
+        }
+    }
+}
+
 fn main_loop(
     connection: Connection,
     params: serde_json::Value,
@@ -154,39 +111,13 @@ fn main_loop(
                     Ok((id, params)) => {
                         //params.text_document_position_params.text_document.uri
                         // load file
-                        let mut parser = Parser::new();
-                        parser
-                            .set_language(tree_sitter_nasl::language())
-                            .expect("Error loading NASL grammar");
-                        // add cache lookup for previous tree
-                        let (code, tree) = parse_file(
-                            parser,
-                            params
-                                .clone()
-                                .text_document_position_params
-                                .text_document
-                                .uri,
-                        );
-                        let fhm = node_functions(code.clone(), tree.root_node());
-                        let idpos = identifier_in_posiion(code, tree.root_node(), params.clone());
-                        let found = {
-                            match idpos.map(|(id, _)| fhm.get(&id)) {
-                                Some(x) => x,
-                                None => None,
-                            }
-                        }
+                        let tdp = params.text_document_position_params;
+                        let inter = nasl::interpret::from_path(tdp.text_document.uri.path()).expect("Expected parsed interpreter");
+                        let found = inter.find_definition(tdp.position.line as usize, tdp.position.character as usize)
+                        
                         .map(|p| Location {
-                            range: Range {
-                                start: Position {
-                                    line: p.row as u32,
-                                    character: p.column as u32,
-                                },
-                                end: Position {
-                                    line: p.row as u32,
-                                    character: p.column as u32,
-                                },
-                            },
-                            uri: params.text_document_position_params.text_document.uri,
+                            range: p.as_range(),
+                            uri: tdp.text_document.uri,
                         });
                         let result: Vec<Location> = match found {
                             Some(x) => vec![x],

@@ -123,11 +123,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2dffe52ecf27772e601905b7522cb4ef790d2cc203488bbd0e2fe85fcb74566d"
 
 [[package]]
+name = "nasl"
+version = "0.1.0"
+dependencies = [
+ "tree-sitter",
+ "tree-sitter-nasl",
+]
+
+[[package]]
 name = "nasl-analyzer"
 version = "0.1.0"
 dependencies = [
  "lsp-server",
  "lsp-types",
+ "nasl",
  "serde",
  "serde_json",
  "tree-sitter",
