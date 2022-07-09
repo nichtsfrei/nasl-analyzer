@@ -1,4 +1,8 @@
 pub mod interpret;
+pub mod cache;
+mod lookup;
+mod types;
+mod parser;
 
 #[cfg(test)]
 mod tests {
