@@ -8,6 +8,7 @@ use walkdir::WalkDir;
 
 use crate::interpret::{self, Interpret};
 
+#[derive(Clone)]
 pub struct Cache {
     paths: Vec<String>,
     plugins: HashMap<String, Interpret>,
@@ -44,8 +45,7 @@ impl Cache {
                 .enumerate()
             {
                 let fname = entry.path().to_string_lossy();
-                // we only care for inc files due to nasl limitation on include
-                if fname.ends_with(".inc") {
+                if fname.ends_with(".inc") || fname.ends_with(".nasl") {
                     if let Err(err) = children[i % worker_count].0.send(fname.to_string()) {
                         eprintln!(
                             "Unable to send {fname} to child {}. {err}",
@@ -74,6 +74,7 @@ impl Cache {
         let plugins = Cache::load_plugins(paths.clone());
         self.paths.extend(paths);
         self.plugins.extend(plugins);
+        
     }
 
     pub fn count(&self) -> usize {
@@ -102,5 +103,9 @@ impl Cache {
             }
             None
         })
+    }
+
+    pub fn each<'a>(&'a self) -> impl Iterator<Item=(&String, &Interpret)> + 'a {
+        self.plugins.iter()
     }
 }

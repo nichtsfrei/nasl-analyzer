@@ -10,5 +10,4 @@ itertools = "0.10.2"
 num_cpus = "1.0"
 walkdir = "2"
 tree-sitter = "0.20"
-#tree-sitter-nasl = "0.0.6"
-tree-sitter-nasl = { path=  "../../tree-sitter-nasl"}
+tree-sitter-nasl = "0.0.7"

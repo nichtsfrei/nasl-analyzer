@@ -47,6 +47,8 @@ pub fn new(_: String, code: String) -> Interpret {
 pub fn from_path(path: &str) -> Result<Interpret, std::io::Error> {
     fs::read_to_string(path).map(|code| new(path.to_string(), code))
 }
+
+
 impl Interpret {
     pub fn identifier(&self, line: usize, column: usize) -> Option<String> {
         let pos = to_pos(line, column);
@@ -63,6 +65,10 @@ impl Interpret {
 
     pub fn includes<'a>(&'a self) -> impl Iterator<Item=&String> + 'a {
         self.lookup.includes()
+    }
+
+    pub fn calls<'a>(&'a self, name: &str) -> Box<dyn Iterator<Item = Point> + 'a> {
+        Box::new(self.lookup.find_calls(name.to_string()).map(|(i, _)| i.start))
     }
 
 }

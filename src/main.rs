@@ -42,14 +42,17 @@
 //! {"jsonrpc": "2.0", "method": "exit", "params": null}
 //! ```
 use std::error::Error;
+use std::path::Path;
 use std::str::FromStr;
 
+use lsp_types::request::References;
 use lsp_types::{
     request::GotoDefinition, GotoDefinitionResponse, InitializeParams, ServerCapabilities,
 };
 use lsp_types::{Location, OneOf, Position, Range, Url};
 
 use nasl::cache::Cache;
+use nasl::interpret::Interpret;
 use serde::{Deserialize, Serialize};
 use tree_sitter::Point;
 
@@ -82,6 +85,7 @@ fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
     //let client_capabilities: ClientCapabilities = init_params.capabilities;
     let server_capabilities = ServerCapabilities {
         definition_provider: Some(OneOf::Left(true)),
+        references_provider: Some(OneOf::Left(true)),
         ..Default::default()
     };
 
@@ -122,6 +126,60 @@ impl AsRange for Point {
     }
 }
 
+fn load_upd_paths(
+    cache: &mut Cache,
+    path: &str,
+    line: usize,
+    character: usize,
+) -> (String, Interpret) {
+    let inter = cache.update(path).expect("Expected parsed interpreter");
+    let name = inter.identifier(line, character).unwrap_or_default();
+    // need to build full path
+    //cache.update_paths(inter.includes().map(|i| i.to_string()).collect());
+    (name, inter)
+}
+
+fn to_location(path: &str, point: Point) -> Location {
+    Location {
+        range: point.as_range(),
+        uri: Url::from_str(&format!("file://{}", path)).expect("unable to parse file://{k}"),
+    }
+}
+
+fn find_definition(
+    cache: &Cache,
+    inter: &Interpret,
+    url: &Url,
+    name: &str,
+    line: usize,
+    character: usize,
+) -> Vec<Location> {
+    let mut found: Vec<Location> = inter
+        .find_definition(name, line, character)
+        .iter()
+        .map(|p| Location {
+            range: p.as_range(),
+            uri: url.clone(),
+        })
+        .collect();
+    // TODO refactor
+
+    let fin: Vec<Location> = inter
+        .includes()
+        .flat_map(|i| cache.find(i))
+        .map(|(p, i)| (p, i.find_definition(name, line, character)))
+        .filter(|(_, v)| !v.is_empty())
+        .flat_map(|(k, v)| {
+            eprintln!("hum: {}", k);
+            let result: Vec<Location> = v.iter().map(|i| to_location(k, *i)).collect();
+            result
+        })
+        .collect();
+    eprintln!("WTF: {:?} -> {:?}", found, fin);
+    found.extend(fin);
+    found
+}
+
 fn main_loop(
     connection: Connection,
     init_params: InitializeParams,
@@ -131,8 +189,7 @@ fn main_loop(
         .map(|i| i.iter().map(|i| i.uri.to_string()).collect())
         .unwrap_or_default();
     let mut cache = Cache::new(rp.clone());
-    eprintln!("cache size: {} for {:?}", cache.count(), rp);
-    //let p: InitializeParams = serde_json::from_value(params).unwrap();
+    eprintln!("finished loading cache for {:?} ({})", rp, cache.count());
     for msg in &connection.receiver {
         match msg {
             Message::Request(req) => {
@@ -140,57 +197,76 @@ fn main_loop(
                     return Ok(());
                 }
 
+                match cast::<References>(req.clone()) {
+                    Ok((id, params)) => {
+                        let tdp = params.text_document_position;
+                        let (name, inter) = load_upd_paths(
+                            &mut cache,
+                            tdp.text_document.uri.path(),
+                            tdp.position.line as usize,
+                            tdp.position.character as usize,
+                        );
+                        let found: Vec<String> = find_definition(
+                            &cache,
+                            &inter,
+                            &tdp.text_document.uri,
+                            &name,
+                            tdp.position.line as usize,
+                            tdp.position.character as usize,
+                        )
+                        .iter()
+                        .map(|p| p.uri.path())
+                        .map(|p| {
+                            Path::new(p)
+                                .file_name()
+                                .unwrap()
+                                .to_str()
+                                .unwrap()
+                                .to_string()
+                        })
+                        .collect();
+                        let fcalls: Vec<Location> = cache
+                            .each()
+                            .filter(|(k, i)| {
+                                let k = Path::new(k).file_name().unwrap().to_str().unwrap();
+                                found.contains(&k.to_string())
+                                    || i.includes().any(|i| found.contains(i))
+                            })
+                            .flat_map(|(p, i)| i.calls(&name).map(|j| (p.to_string(), j)))
+                            .map(|(pa, p)| to_location(&pa, p))
+                            .collect();
+                        let result = Some(GotoDefinitionResponse::Array(fcalls));
+                        let result = serde_json::to_value(&result).unwrap();
+                        let resp = Response {
+                            id,
+                            result: Some(result),
+                            error: None,
+                        };
+                        connection.sender.send(Message::Response(resp))?;
+                        continue;
+                    }
+                    Err(err @ ExtractError::JsonError { .. }) => panic!("{:?}", err),
+                    Err(ExtractError::MethodMismatch(req)) => req,
+                };
                 match cast::<GotoDefinition>(req) {
                     Ok((id, params)) => {
-                        //params.text_document_position_params.text_document.uri
-                        // load file
                         let tdp = params.text_document_position_params;
-
-                        let inter = cache
-                            .update(tdp.text_document.uri.path())
-                            .expect("Expected parsed interpreter");
-                        let name = inter.identifier(
-                                tdp.position.line as usize,
-                                tdp.position.character as usize,
-                            ).unwrap_or_default();
+                        let (name, inter) = load_upd_paths(
+                            &mut cache,
+                            tdp.text_document.uri.path(),
+                            tdp.position.line as usize,
+                            tdp.position.character as usize,
+                        );
                         // TODO speed up; going through all incs takes too long
-                        let mut found: Vec<Location> = inter
-                            .find_definition(
-                                &name,
-                                tdp.position.line as usize,
-                                tdp.position.character as usize,
-                            )
-                            .iter()
-                            .map(|p| Location {
-                                range: p.as_range(),
-                                uri: tdp.text_document.uri.clone(),
-                            })
-                            .collect();
-                        let fin: Vec<Location> = inter
-                            .includes()
-                            // maybe just use first?
-                            .flat_map(|i| cache.find(i))
-                            .map(|(p, i)| {
-                                (
-                                    p,
-                                    i.find_definition(
-                                        &name,
-                                        tdp.position.line as usize,
-                                        tdp.position.character as usize,
-                                    ),
-                                )
-                            })
-                            .filter(|(_, v)| !v.is_empty())
-                            .flat_map(|(k, v)| {
-                                let result : Vec<Location> = v.iter().map(|i| Location {
-                                    range: i.as_range(),
-                                    uri: Url::from_str(&format!("file://{}", k.clone()))
-                                        .expect("unable to parse file://{k}"),
-                                }).collect();
-                                result
-                            })
-                            .collect();
-                        found.extend(fin);
+                        let found = find_definition(
+                            &cache,
+                            &inter,
+                            &tdp.text_document.uri,
+                            &name,
+                            tdp.position.line as usize,
+                            tdp.position.character as usize,
+                        );
+                        eprintln!("found defs: {:?}", found);
                         let result = Some(GotoDefinitionResponse::Array(found));
                         let result = serde_json::to_value(&result).unwrap();
                         let resp = Response {
