@@ -23,8 +23,7 @@ impl Cache {
             let ttx = tx.clone();
             let child = thread::spawn(move || {
                 while let Ok(x) = rxp.recv_timeout(Duration::from_secs(1)) {
-                    let inter =
-                        interpret::from_path(&x).expect("Expected parsed interpreter");
+                    let inter = interpret::from_path(&x).expect("Expected parsed interpreter");
                     if let Err(err) = ttx.send((x.clone(), inter)) {
                         eprintln!("Unable to send {x} for caching. {err}");
                     }
@@ -45,7 +44,7 @@ impl Cache {
             {
                 let fname = entry.path().to_string_lossy();
                 // we only care for inc files due to nasl limitation on include
-                if fname.ends_with(".inc") {
+                if fname.ends_with(".inc") || fname.ends_with(".nasl") {
                     if let Err(err) = children[i % worker_count].0.send(fname.to_string()) {
                         eprintln!(
                             "Unable to send {fname} to child {}. {err}",
@@ -95,7 +94,7 @@ impl Cache {
         self.plugins.get(path).cloned()
     }
 
-    pub fn find<'a>(&'a self, path: &'a str) -> impl Iterator<Item=(&String, &Interpret)> + 'a {
+    pub fn find<'a>(&'a self, path: &'a str) -> impl Iterator<Item = (&String, &Interpret)> + 'a {
         self.plugins.iter().filter_map(move |(k, v)| {
             if k.ends_with(path) {
                 return Some((k, v));
