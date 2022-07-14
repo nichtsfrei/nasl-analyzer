@@ -10,6 +10,18 @@ pub struct Identifier {
 pub fn to_pos(r: usize, c: usize) -> f32 {
     r as f32 + c as f32 / 100.0
 }
+#[derive(Clone, Debug)]
+pub enum Argument {
+    StringLiteral(Identifier),
+}
+
+impl Argument {
+    pub fn to_string(&self) -> Option<String> {
+        match self {
+            Argument::StringLiteral(id) => id.clone().identifier,
+        }
+    }
+}
 
 impl Identifier {
     pub fn as_pos(&self) -> (f32, f32) {

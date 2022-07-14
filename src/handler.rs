@@ -1,9 +1,14 @@
 use std::{error::Error, str::FromStr};
 
 use lsp_server::{Connection, Message, RequestId, Response};
-use nasl::cache::Cache;
+use nasl::{
+    cache::{self, Cache},
+    types::{to_pos, Argument},
+};
 
 use lsp_types::{GotoDefinitionParams, GotoDefinitionResponse, Location, Url};
+use tracing::debug;
+use tree_sitter::Point;
 
 use crate::extension::AsRange;
 
@@ -35,14 +40,26 @@ impl<'a> RequestResponseSender<'a> {
     }
 }
 
+fn location(path: &str, point: &Point) -> Option<Location> {
+    if let Ok(val) = Url::from_str(&format!("file://{}", path)) {
+        return Some(Location {
+            range: point.as_range(),
+            uri: val,
+        });
+    }
+    None
+}
+
 impl ToResponse<GotoDefinitionParams, GotoDefinitionResponse> for Cache {
     fn handle(&mut self, params: GotoDefinitionParams) -> Option<GotoDefinitionResponse> {
         let tdp = params.text_document_position_params;
 
         let line = tdp.position.line as usize;
         let character = tdp.position.character as usize;
-        let inter = self.update(tdp.text_document.uri.path())?;
+        let path = tdp.text_document.uri.path();
+        let inter = self.update(path)?;
         let name = inter.identifier(line, character)?;
+        debug!("looking for {name}({line}:{character}) in {path}");
 
         let mut found: Vec<Location> = inter
             .find_definition(&name, line, character)
@@ -58,22 +75,28 @@ impl ToResponse<GotoDefinitionParams, GotoDefinitionResponse> for Cache {
             .map(|(p, i)| (p, i.find_definition(&name, line, character)))
             .filter(|(_, v)| !v.is_empty())
             .flat_map(|(k, v)| {
-                let result: Vec<Location> = v
-                    .iter()
-                    .filter_map(|i| {
-                        if let Ok(val) = Url::from_str(&format!("file://{}", k.clone())) {
-                            return Some(Location {
-                                range: i.as_range(),
-                                uri: val,
-                            });
-                        }
-                        None
-                    })
-                    .collect();
+                let result: Vec<Location> = v.iter().filter_map(|i| location(k, i)).collect();
                 result
             })
             .collect();
         found.extend(fin);
+        if found.is_empty() {
+            let istr: Vec<String> = inter
+                .calls("include")
+                .filter(|(i, _)| i.in_pos(to_pos(line, character)))
+                .flat_map(|(_, p)| {
+                    let r: Vec<String> = p.iter().filter_map(|p| p.to_string()).collect();
+                    r
+                })
+                .collect();
+            let incs: Vec<Location> = istr
+                .iter()
+                .flat_map(|p| self.find(p))
+                .filter_map(|(p, _)| location(p, &Point::default()))
+                .collect();
+            found.extend(incs);
+        }
+        debug!("found goto definitions: {:?}", found);
         Some(GotoDefinitionResponse::Array(found))
     }
 }

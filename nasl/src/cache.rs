@@ -4,10 +4,12 @@ use std::{
     thread,
     time::Duration,
 };
+use tracing::{debug, warn};
 use walkdir::WalkDir;
 
 use crate::interpret::{self, Interpret};
 
+#[derive(Debug)]
 pub struct Cache {
     paths: Vec<String>,
     plugins: HashMap<String, Interpret>,
@@ -36,21 +38,22 @@ impl Cache {
         for path in paths {
             // TODO remove file:// prefix here
             let np = path.strip_prefix("file://").unwrap_or(&path);
-            for (i, entry) in WalkDir::new(np)
-                .follow_links(true)
-                .into_iter()
-                .filter_map(Result::ok)
-                .enumerate()
-            {
-                let fname = entry.path().to_string_lossy();
-                // we only care for inc files due to nasl limitation on include
-                if fname.ends_with(".inc") || fname.ends_with(".nasl") {
-                    if let Err(err) = children[i % worker_count].0.send(fname.to_string()) {
-                        eprintln!(
-                            "Unable to send {fname} to child {}. {err}",
-                            i % worker_count
-                        );
+            debug!("looking for .nasl or .inc in {np}");
+            for (i, r) in WalkDir::new(np).follow_links(true).into_iter().enumerate() {
+                match r {
+                    Ok(entry) => {
+                        let fname = entry.path().to_string_lossy();
+                        // we only care for inc files due to nasl limitation on include
+                        if fname.ends_with(".inc") || fname.ends_with(".nasl") {
+                            if let Err(err) = children[i % worker_count].0.send(fname.to_string()) {
+                                eprintln!(
+                                    "Unable to send {fname} to child {}. {err}",
+                                    i % worker_count
+                                );
+                            }
+                        }
                     }
+                    Err(err) => warn!("unable to load file {err}"),
                 }
             }
         }

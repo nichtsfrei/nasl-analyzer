@@ -1,9 +1,9 @@
-use std::fs;
+use std::{fs};
 use tree_sitter::{Node, Parser, Point, Tree};
 
-use crate::{lookup::Lookup, types::to_pos};
+use crate::{lookup::Lookup, types::{to_pos, Identifier, Argument}};
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Interpret {
     //    path: String,
     code: String,
@@ -54,17 +54,24 @@ impl Interpret {
     }
 
     pub fn find_definition(&self, name: &str, line: usize, column: usize) -> Vec<Point> {
-        self.lookup.find_definition(name, to_pos(line, column))
+        self.lookup
+            .find_definition(name, to_pos(line, column))
             .map(|i| i.start)
             .iter()
             .copied()
             .collect()
     }
 
-    pub fn includes<'a>(&'a self) -> impl Iterator<Item=&String> + 'a {
+    pub fn includes<'a>(&'a self) -> impl Iterator<Item = &String> + 'a {
         self.lookup.includes()
     }
 
+    pub fn calls<'a>(&'a self, name: &str) -> Box<dyn Iterator<Item = (Identifier, Vec<Argument>)> + 'a> {
+        Box::new(
+            self.lookup
+                .find_calls(name.to_string())
+        )
+    }
 }
 
 #[cfg(test)]

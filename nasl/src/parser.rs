@@ -1,9 +1,9 @@
 use itertools::{Either, Itertools};
 use tree_sitter::Node;
 
-use crate::{lookup::Lookup, types::Identifier};
+use crate::{lookup::Lookup, types::{Identifier, Argument}};
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum Jumpable {
     FunDef((Identifier, Vec<Identifier>)),
     Assign(Identifier),
@@ -11,18 +11,6 @@ pub enum Jumpable {
     CallExpression(Identifier, Vec<Argument>),
 }
 
-#[derive(Clone, Debug)]
-pub enum Argument {
-    StringLiteral(Identifier),
-}
-
-impl Argument {
-    pub fn to_string(&self) -> Option<String> {
-        match self {
-            Argument::StringLiteral(id) => id.clone().identifier,
-        }
-    }
-}
 
 pub fn identifier(code: &str, node: &Node<'_>) -> Option<Identifier> {
     if node.kind() == "identifier" {

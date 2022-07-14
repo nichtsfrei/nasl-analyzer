@@ -1,11 +1,11 @@
 use tree_sitter::Node;
 
 use crate::{
-    parser::{self, Argument, Jumpable},
-    types::Identifier,
+    parser::{self, Jumpable},
+    types::{Identifier, Argument},
 };
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Lookup {
     definitions: DefContainer,
     calls: CallContainer,
@@ -20,7 +20,7 @@ trait NamePosContainer<T> {
     fn items(&self, name: String, pos: f32) -> Box<dyn Iterator<Item = T> + '_>;
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct CallContainer {
     calls: Vec<Jumpable>,
 }
@@ -39,7 +39,7 @@ impl NameContainer<(Identifier, Vec<Argument>)> for CallContainer {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct DefContainer {
     definitions: Vec<Jumpable>,
 }
