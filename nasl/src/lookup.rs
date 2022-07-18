@@ -1,8 +1,9 @@
+
 use tree_sitter::Node;
 
 use crate::{
-    parser::{self, Jumpable},
-    types::{Identifier, Argument},
+    parser::{Jumpable, JumpableExt, Parser},
+    types::{Argument, Identifier},
 };
 
 #[derive(Clone, Debug)]
@@ -67,7 +68,8 @@ impl NamePosContainer<Identifier> for DefContainer {
                     }
                 }
                 Jumpable::Assign(id) => {
-                    // if there is already a match ignore outside definitions
+                    // TODO when need the information if it is in the same file
+                    // if so control that the definition was done before
                     if id.matches(&name) {
                         result.push(id.clone());
                     }
@@ -88,7 +90,7 @@ impl Lookup {
         self.calls.items(name)
     }
 
-    pub fn includes<'a>(&'a self) -> impl Iterator<Item=&String> + 'a {
+    pub fn includes<'a>(&'a self) -> impl Iterator<Item = &String> + 'a {
         self.includes.iter()
     }
 
@@ -97,50 +99,22 @@ impl Lookup {
     }
 
     pub fn new(code: &str, node: &Node<'_>) -> Self {
-        let rcrsr = &mut node.walk();
-        let crsr = node.named_children(rcrsr);
         let mut definitions: Vec<Jumpable> = vec![];
         let mut calls: Vec<Jumpable> = vec![];
-        for c in crsr {
-            match c.kind() {
-                "function_definition" => {
-                    if let Some((func, loc)) = parser::func_def(code, &c) {
-                        definitions.push(func);
-                        definitions.push(loc);
-                    }
-                }
-                "expression_statement" => {
-                    let rccrsr = &mut node.walk();
-                    let ccrsr = c.named_children(rccrsr);
-                    for cc in ccrsr {
-                        if let Some(x) = parser::assignment_expression(code, &cc) {
-                            definitions.push(x);
-                        }
-                        if let Some(x) = parser::call_expression(code, &cc) {
-                            calls.push(x);
-                        }
-                    }
-                }
-                "compound_statement" => {
-                    definitions.push(Jumpable::Block((
-                        Identifier {
-                            start: c.start_position(),
-                            end: c.end_position(),
-                            identifier: None,
-                        },
-                        Lookup::new(code, &c),
-                    )));
-                }
-                _ => {} // ignore
+        let cp = &Parser::new(code, None);
+
+        for j in node.jumpable(cp) {
+            if j.is_definition() {
+                definitions.push(j);
+            } else {
+                calls.push(j);
             }
         }
 
         let cc = CallContainer {
             calls: calls.clone(),
         };
-        let dc = DefContainer {
-            definitions,
-        };
+        let dc = DefContainer { definitions };
 
         let includes = cc
             .items("include".to_string())
@@ -182,6 +156,58 @@ mod tests {
         assert_eq!(js.find_calls("include".to_string()).collect_vec().len(), 1);
         assert_eq!(js.includes.len(), 1);
         assert_eq!(js.includes[0], "testus".to_string());
+    }
+
+    #[test]
+    fn if_handling() {
+        let code = r#"
+            if (description) {
+                b = 13;
+                c = b;
+            } else if (42) {
+                b = 14;
+                c = b;
+            } else {
+                b = 12;
+                c = b;
+            }
+            b = 1;
+            c = b;
+    "#;
+        let tree = tree(code.to_string(), None);
+        let js = Lookup::new(code, &tree.root_node());
+        assert_eq!(
+            js.find_definition("b", to_pos(3, 20)),
+            Some(Identifier {
+                start: Point { row: 2, column: 16 },
+                end: Point { row: 2, column: 17 },
+                identifier: Some("b".to_string())
+            })
+        );
+        assert_eq!(
+            js.find_definition("b", to_pos(6, 20)),
+            Some(Identifier {
+                start: Point { row: 5, column: 16 },
+                end: Point { row: 5, column: 17 },
+                identifier: Some("b".to_string())
+            })
+        );
+        assert_eq!(
+            js.find_definition("b", to_pos(9, 20)),
+            Some(Identifier {
+                start: Point { row: 8, column: 16 },
+                end: Point { row: 8, column: 17 },
+                identifier: Some("b".to_string())
+            })
+        );
+        assert_eq!(
+            js.find_definition("b", to_pos(12, 16)),
+            Some(Identifier {
+                start: Point { row: 11, column: 12 },
+                end: Point { row: 11, column: 13 },
+                identifier: Some("b".to_string())
+            })
+        );
     }
 
     #[test]

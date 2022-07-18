@@ -15,11 +15,11 @@ pub struct Settings {
 }
 
 
-pub trait AsRange {
+pub trait AsRangeExt {
     fn as_range(&self) -> Range;
 }
 
-impl AsRange for Point {
+impl AsRangeExt for Point {
     fn as_range(&self) -> Range {
         Range {
             start: Position {

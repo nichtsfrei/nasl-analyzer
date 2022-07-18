@@ -105,4 +105,8 @@ impl Cache {
             None
         })
     }
+
+    pub fn each<'a>(&'a self) -> impl Iterator<Item = (&String, &Interpret)> + 'a {
+        self.plugins.iter()
+    }
 }

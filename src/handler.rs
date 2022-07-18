@@ -2,17 +2,17 @@ use std::{error::Error, str::FromStr};
 
 use lsp_server::{Connection, Message, RequestId, Response};
 use nasl::{
-    cache::{self, Cache},
-    types::{to_pos, Argument},
+    cache::Cache,
+    types::to_pos,
 };
 
 use lsp_types::{GotoDefinitionParams, GotoDefinitionResponse, Location, Url};
 use tracing::debug;
 use tree_sitter::Point;
 
-use crate::extension::AsRange;
+use crate::extension::AsRangeExt;
 
-pub trait ToResponse<T, R> {
+pub trait ToResponseExt<T, R> {
     fn handle(&mut self, params: T) -> Option<R>;
 }
 pub struct RequestResponseSender<'a> {
@@ -22,7 +22,7 @@ pub struct RequestResponseSender<'a> {
 impl<'a> RequestResponseSender<'a> {
     pub fn send_response<T, R>(
         &self,
-        to_response: &mut dyn ToResponse<T, R>,
+        to_response: &mut dyn ToResponseExt<T, R>,
         params: T,
         id: RequestId,
     ) -> Result<(), Box<dyn Error + Sync + Send>>
@@ -50,7 +50,7 @@ fn location(path: &str, point: &Point) -> Option<Location> {
     None
 }
 
-impl ToResponse<GotoDefinitionParams, GotoDefinitionResponse> for Cache {
+impl ToResponseExt<GotoDefinitionParams, GotoDefinitionResponse> for Cache {
     fn handle(&mut self, params: GotoDefinitionParams) -> Option<GotoDefinitionResponse> {
         let tdp = params.text_document_position_params;
 

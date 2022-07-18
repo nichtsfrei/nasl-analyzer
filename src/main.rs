@@ -78,6 +78,14 @@ fn main_loop(
                     Err(err @ ExtractError::JsonError { .. }) => panic!("{:?}", err),
                     Err(ExtractError::MethodMismatch(req)) => req,
                 };
+                // match cast::<References>(req) {
+                //     Ok((id, params)) => {
+                //         rrs.send_response(&mut cache, params, id)?;
+                //         continue;
+                //     }
+                //     Err(err @ ExtractError::JsonError { .. }) => panic!("{:?}", err),
+                //     Err(ExtractError::MethodMismatch(req)) => req,
+                // };
                 // ...
             }
             Message::Response(resp) => {
