@@ -9,7 +9,7 @@ use crate::{
 
 #[derive(Clone, Debug)]
 pub enum Jumpable {
-    FunDef((Identifier, Vec<Identifier>)),
+    FunDef(Identifier, Vec<Identifier>),
     IfDef(Identifier, Vec<Identifier>),
     Assign(Identifier),
     Block((Identifier, Lookup)),
@@ -24,12 +24,13 @@ impl Jumpable {
 
 pub struct Parser<'a> {
     code: &'a str,
+    origin: &'a str,
     parent: Option<&'a Node<'a>>,
 }
 
 impl<'a> Parser<'a> {
-    pub fn new(code: &'a str, parent: Option<&'a Node<'a>>) -> Self {
-        Self { code, parent }
+    pub fn new(origin: &'a str, code: &'a str, parent: Option<&'a Node<'a>>) -> Self {
+        Self { code, origin, parent }
     }
 }
 
@@ -70,14 +71,14 @@ impl FuncDeclaratorExt for Node<'_> {
                 }
             }
             if let Some(p) = container.parent {
-                return Some(Jumpable::FunDef((
+                return Some(Jumpable::FunDef(
                     Identifier {
                         start: p.start_position(),
                         end: p.end_position(),
                         identifier: id,
                     },
                     params,
-                )));
+                ));
             }
         }
         None
@@ -104,7 +105,7 @@ impl FuncDefExt for Node<'_> {
             let crsr = self.named_children(rcrsr);
             let mr: Vec<Jumpable> = crsr
                 .filter_map(|c| {
-                    c.func_declarator(&Parser::new(container.code, Some(&self)))
+                    c.func_declarator(&Parser::new(container.origin, container.code, Some(&self)))
                         .or_else(|| {
                             let compounds = c.compound_statement(container);
                             if compounds.is_empty() {
@@ -133,7 +134,7 @@ impl CompoundExt for Node<'_> {
                     end: self.end_position(),
                     identifier: None,
                 },
-                Lookup::new(container.code, &self),
+                Lookup::new(container.origin, container.code, &self),
             ))];
         }
         vec![]
@@ -251,7 +252,7 @@ impl BinaryExpressionExt for Node<'_> {
             let rcrsr = &mut self.walk();
             let crsr = self.named_children(rcrsr);
             for c in crsr {
-                result.extend(c.paranthesized_expression(container));
+                result.extend(c.parenthesized_expression(container));
             }
             return result;
         }
@@ -259,19 +260,20 @@ impl BinaryExpressionExt for Node<'_> {
     }
 }
 
-trait ParanthesizedExpressionExt {
-    fn paranthesized_expression(self, container: &Parser<'_>) -> Vec<Jumpable>;
+trait ParenthesizedExpressionExt {
+    fn parenthesized_expression(self, container: &Parser<'_>) -> Vec<Jumpable>;
 }
 
-impl ParanthesizedExpressionExt for Node<'_> {
-    fn paranthesized_expression(self, container: &Parser<'_>) -> Vec<Jumpable> {
+impl ParenthesizedExpressionExt for Node<'_> {
+    fn parenthesized_expression(self, container: &Parser<'_>) -> Vec<Jumpable> {
         let mut result = vec![];
-        if self.kind() == "paranthesized_expression" {
+        if self.kind() == "parenthesized_expression" {
             let rcrsr = &mut self.walk();
             let crsr = self.named_children(rcrsr);
             for c in crsr {
                 result.extend(c.binary_expression(container));
-                result.extend(c.assignment_expression(container))
+                result.extend(c.assignment_expression(container));
+                result.extend(c.parenthesized_expression(container));
             }
         }
         result
@@ -288,15 +290,15 @@ impl IfStatementExt for Node<'_> {
         if self.kind() == "if_statement" {
             if let Some(c) = self.child_by_field_name("condition") {
                 let mut assignments = vec![];
-                for j in c.paranthesized_expression(container) {
+                for j in c.parenthesized_expression(container) {
                     if let Jumpable::Assign(id) = j {
                         assignments.push(id)
                     }
                 }
                 let ifdef = Jumpable::IfDef(
                     Identifier {
-                        start: c.start_position(),
-                        end: c.end_position(),
+                        start: self.start_position(),
+                        end: self.end_position(),
                         identifier: None,
                     },
                     assignments,
@@ -324,7 +326,6 @@ pub trait JumpableExt {
 impl JumpableExt for Node<'_> {
     fn jumpable(self, container: &Parser<'_>) -> Vec<Jumpable> {
         let mut result = vec![];
-
         let rcrsr = &mut self.walk();
         let crsr = self.named_children(rcrsr);
         for c in crsr {

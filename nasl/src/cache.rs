@@ -36,7 +36,6 @@ impl Cache {
 
         let mut plugins = HashMap::new();
         for path in paths {
-            // TODO remove file:// prefix here
             let np = path.strip_prefix("file://").unwrap_or(&path);
             debug!("looking for .nasl or .inc in {np}");
             for (i, r) in WalkDir::new(np).follow_links(true).into_iter().enumerate() {

@@ -58,11 +58,11 @@ impl ToResponseExt<GotoDefinitionParams, GotoDefinitionResponse> for Cache {
         let character = tdp.position.character as usize;
         let path = tdp.text_document.uri.path();
         let inter = self.update(path)?;
-        let name = inter.identifier(line, character)?;
-        debug!("looking for {name}({line}:{character}) in {path}");
+        let name = inter.identifier(path, line, character)?;
+        debug!("looking for {}({line}:{character}) in {path}", name.name);
 
         let mut found: Vec<Location> = inter
-            .find_definition(&name, line, character)
+            .find_definition(&name)
             .iter()
             .map(|p| Location {
                 range: p.as_range(),
@@ -72,7 +72,7 @@ impl ToResponseExt<GotoDefinitionParams, GotoDefinitionResponse> for Cache {
         let fin: Vec<Location> = inter
             .includes()
             .flat_map(|i| self.find(i))
-            .map(|(p, i)| (p, i.find_definition(&name, line, character)))
+            .map(|(p, i)| (p, i.find_definition(&name)))
             .filter(|(_, v)| !v.is_empty())
             .flat_map(|(k, v)| {
                 let result: Vec<Location> = v.iter().filter_map(|i| location(k, i)).collect();

@@ -1,11 +1,13 @@
-use std::{fs};
+use std::fs;
 use tree_sitter::{Node, Parser, Point, Tree};
 
-use crate::{lookup::Lookup, types::{to_pos, Identifier, Argument}};
+use crate::{
+    lookup::{Lookup, SearchParameter},
+    types::{to_pos, Argument, Identifier},
+};
 
 #[derive(Clone, Debug)]
 pub struct Interpret {
-    //    path: String,
     code: String,
     tree: Tree,
     lookup: Lookup,
@@ -35,27 +37,40 @@ fn find_identifier(pos: f32, code: &str, n: &Node<'_>) -> Option<String> {
     None
 }
 
-pub fn new(_: String, code: String) -> Interpret {
+// TODO change signature
+pub fn new(origin: String, code: String) -> Interpret {
     let tree = tree(code.clone(), None);
     Interpret {
         code: code.clone(),
         tree: tree.clone(),
-        lookup: Lookup::new(&code, &tree.root_node()),
+        lookup: Lookup::new(&origin, &code, &tree.root_node()),
     }
 }
 
 pub fn from_path(path: &str) -> Result<Interpret, std::io::Error> {
     fs::read_to_string(path).map(|code| new(path.to_string(), code))
 }
+
 impl Interpret {
-    pub fn identifier(&self, line: usize, column: usize) -> Option<String> {
+    pub fn identifier(
+        &self,
+        origin: &str,
+        line: usize,
+        column: usize,
+    ) -> Option<SearchParameter> {
         let pos = to_pos(line, column);
-        return find_identifier(pos, &self.code, &self.tree.root_node().clone());
+        return find_identifier(pos, &self.code, &self.tree.root_node().clone()).map(|name| {
+            SearchParameter {
+                origin: origin.to_string(),
+                name,
+                pos,
+            }
+        });
     }
 
-    pub fn find_definition(&self, name: &str, line: usize, column: usize) -> Vec<Point> {
+    pub fn find_definition(&self, name: &SearchParameter) -> Vec<Point> {
         self.lookup
-            .find_definition(name, to_pos(line, column))
+            .find_definition(name)
             .map(|i| i.start)
             .iter()
             .copied()
@@ -66,11 +81,11 @@ impl Interpret {
         self.lookup.includes()
     }
 
-    pub fn calls<'a>(&'a self, name: &str) -> Box<dyn Iterator<Item = (Identifier, Vec<Argument>)> + 'a> {
-        Box::new(
-            self.lookup
-                .find_calls(name.to_string())
-        )
+    pub fn calls<'a>(
+        &'a self,
+        name: &str,
+    ) -> Box<dyn Iterator<Item = (Identifier, Vec<Argument>)> + 'a> {
+        Box::new(self.lookup.find_calls(name))
     }
 }
 
@@ -93,10 +108,14 @@ mod tests {
             "#
             .to_string(),
         );
-        assert_eq!(result.identifier(5, 14), Some("test".to_string()));
-        assert_eq!(result.identifier(5, 18), Some("testus".to_string()));
+        let testus = result.identifier("/tmp/test.nasl", 5, 18);
         assert_eq!(
-            result.find_definition("testus", 5, 19)[0],
+            result.identifier("/tmp/test.nasl", 5, 14).map(|i| i.name),
+            Some("test".to_string())
+        );
+        assert_eq!(testus.clone().map(|i| i.name), Some("testus".to_string()));
+        assert_eq!(
+            result.find_definition(&testus.unwrap())[0],
             Point { row: 4, column: 12 }
         );
     }

@@ -1,10 +1,16 @@
-
 use tree_sitter::Node;
 
 use crate::{
     parser::{Jumpable, JumpableExt, Parser},
     types::{Argument, Identifier},
 };
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct SearchParameter {
+    pub origin: String,
+    pub name: String,
+    pub pos: f32,
+}
 
 #[derive(Clone, Debug)]
 pub struct Lookup {
@@ -18,7 +24,7 @@ trait NameContainer<T> {
 }
 
 trait NamePosContainer<T> {
-    fn items(&self, name: String, pos: f32) -> Box<dyn Iterator<Item = T> + '_>;
+    fn items<'a>(&'a self, sp: &'a SearchParameter) -> Box<dyn Iterator<Item = Identifier> + '_>;
 }
 
 #[derive(Clone, Debug)]
@@ -43,34 +49,49 @@ impl NameContainer<(Identifier, Vec<Argument>)> for CallContainer {
 #[derive(Clone, Debug)]
 struct DefContainer {
     definitions: Vec<Jumpable>,
+    origin: String,
+}
+
+fn verify_args(
+    id: &Identifier,
+    origin: &str,
+    args: &Vec<Identifier>,
+    defco: &SearchParameter,
+) -> Vec<Identifier> {
+    let mut result = vec![];
+    if id.matches(&defco.name) {
+        result.push(id.clone());
+    }
+    if origin == defco.origin && id.in_pos(defco.pos) {
+        for p in args {
+            if p.matches(&defco.name) {
+                result.push(p.clone());
+            }
+        }
+    }
+    result
 }
 
 impl NamePosContainer<Identifier> for DefContainer {
-    fn items(&self, name: String, pos: f32) -> Box<dyn Iterator<Item = Identifier> + '_> {
+    fn items<'a>(&'a self, sp: &'a SearchParameter) -> Box<dyn Iterator<Item = Identifier> + '_> {
         let hum = self.definitions.iter().flat_map(move |i| {
             let mut result = vec![];
             match i {
                 Jumpable::Block((id, js)) => {
-                    if id.in_pos(pos) {
-                        result.extend(js.find_definition(&name, pos));
+                    if self.origin == sp.origin && id.in_pos(sp.pos) {
+                        result.extend(js.find_definition(sp));
                     }
                 }
-                Jumpable::FunDef((id, params)) => {
-                    if id.matches(&name) {
-                        result.push(id.clone());
-                    }
-                    if id.in_pos(pos) {
-                        for p in params {
-                            if p.matches(&name) {
-                                result.push(p.clone());
-                            }
-                        }
-                    }
+                Jumpable::IfDef(id, params) => {
+                    result.extend(verify_args(id, &self.origin, params, sp));
+                }
+                Jumpable::FunDef(id, params) => {
+                    result.extend(verify_args(id, &self.origin, params, sp));
                 }
                 Jumpable::Assign(id) => {
                     // TODO when need the information if it is in the same file
                     // if so control that the definition was done before
-                    if id.matches(&name) {
+                    if id.matches(&sp.name) {
                         result.push(id.clone());
                     }
                 }
@@ -85,23 +106,23 @@ impl Lookup {
     // currently we don't care about position since there is no function declaration in blocks
     pub fn find_calls<'a>(
         &'a self,
-        name: String,
+        name: &str,
     ) -> Box<dyn Iterator<Item = (Identifier, Vec<Argument>)> + 'a> {
-        self.calls.items(name)
+        self.calls.items(name.to_string())
     }
 
     pub fn includes<'a>(&'a self) -> impl Iterator<Item = &String> + 'a {
         self.includes.iter()
     }
 
-    pub fn find_definition(&self, name: &str, pos: f32) -> Option<Identifier> {
-        self.definitions.items(name.to_string(), pos).next()
+    pub fn find_definition(&self, sp: &SearchParameter) -> Option<Identifier> {
+        self.definitions.items(sp).next()
     }
 
-    pub fn new(code: &str, node: &Node<'_>) -> Self {
+    pub fn new(origin: &str, code: &str, node: &Node<'_>) -> Self {
         let mut definitions: Vec<Jumpable> = vec![];
         let mut calls: Vec<Jumpable> = vec![];
-        let cp = &Parser::new(code, None);
+        let cp = &Parser::new(origin, code, None);
 
         for j in node.jumpable(cp) {
             if j.is_definition() {
@@ -114,7 +135,10 @@ impl Lookup {
         let cc = CallContainer {
             calls: calls.clone(),
         };
-        let dc = DefContainer { definitions };
+        let dc = DefContainer {
+            definitions,
+            origin: origin.to_string(),
+        };
 
         let includes = cc
             .items("include".to_string())
@@ -136,11 +160,10 @@ mod tests {
     use tree_sitter::Point;
 
     use crate::{
-        interpret::tree,
-        types::{to_pos, Identifier},
+        types::{to_pos, Identifier}, interpret::tree,
     };
 
-    use super::Lookup;
+    use super::{Lookup, SearchParameter};
 
     #[test]
     fn find_calls() {
@@ -150,12 +173,20 @@ mod tests {
             test("testus");
             "#;
         let tree = tree(code.to_string(), None);
-        let js = Lookup::new(code, &tree.root_node());
+        let js = Lookup::new("", code, &tree.root_node());
         assert_eq!(js.calls.calls.len(), 3);
-        assert_eq!(js.find_calls("test".to_string()).collect_vec().len(), 2);
-        assert_eq!(js.find_calls("include".to_string()).collect_vec().len(), 1);
+        assert_eq!(js.find_calls("test").collect_vec().len(), 2);
+        assert_eq!(js.find_calls("include").collect_vec().len(), 1);
         assert_eq!(js.includes.len(), 1);
         assert_eq!(js.includes[0], "testus".to_string());
+    }
+
+    fn str_to_defco(name: &str, line: usize, column: usize) -> SearchParameter {
+        SearchParameter {
+            origin: "aha.nasl".to_string(),
+            name: name.to_string(),
+            pos: to_pos(line, column),
+        }
     }
 
     #[test]
@@ -173,11 +204,13 @@ mod tests {
             }
             b = 1;
             c = b;
+            if ((d = 12))
+              test(d);
     "#;
         let tree = tree(code.to_string(), None);
-        let js = Lookup::new(code, &tree.root_node());
+        let js = Lookup::new("aha.nasl", code, &tree.root_node());
         assert_eq!(
-            js.find_definition("b", to_pos(3, 20)),
+            js.find_definition(&str_to_defco("b", 3, 20)),
             Some(Identifier {
                 start: Point { row: 2, column: 16 },
                 end: Point { row: 2, column: 17 },
@@ -185,7 +218,7 @@ mod tests {
             })
         );
         assert_eq!(
-            js.find_definition("b", to_pos(6, 20)),
+            js.find_definition(&str_to_defco("b", 6, 20)),
             Some(Identifier {
                 start: Point { row: 5, column: 16 },
                 end: Point { row: 5, column: 17 },
@@ -193,7 +226,7 @@ mod tests {
             })
         );
         assert_eq!(
-            js.find_definition("b", to_pos(9, 20)),
+            js.find_definition(&str_to_defco("b", 9, 20)),
             Some(Identifier {
                 start: Point { row: 8, column: 16 },
                 end: Point { row: 8, column: 17 },
@@ -201,11 +234,31 @@ mod tests {
             })
         );
         assert_eq!(
-            js.find_definition("b", to_pos(12, 16)),
+            js.find_definition(&str_to_defco("b", 12, 16)),
             Some(Identifier {
-                start: Point { row: 11, column: 12 },
-                end: Point { row: 11, column: 13 },
+                start: Point {
+                    row: 11,
+                    column: 12
+                },
+                end: Point {
+                    row: 11,
+                    column: 13
+                },
                 identifier: Some("b".to_string())
+            })
+        );
+        assert_eq!(
+            js.find_definition(&str_to_defco("d", 14, 19)),
+            Some(Identifier {
+                start: Point {
+                    row: 13,
+                    column: 17
+                },
+                end: Point {
+                    row: 13,
+                    column: 18
+                },
+                identifier: Some("d".to_string())
             })
         );
     }
@@ -222,10 +275,10 @@ mod tests {
             test(testus);
             "#;
         let tree = tree(code.to_string(), None);
-        let js = Lookup::new(code, &tree.root_node());
+        let js = Lookup::new("aha.nasl", code, &tree.root_node());
         assert_eq!(js.definitions.definitions.len(), 4);
         assert_eq!(
-            js.find_definition("a", to_pos(2, 21)),
+            js.find_definition(&str_to_defco("a", 2, 21)),
             Some(Identifier {
                 start: Point { row: 1, column: 26 },
                 end: Point { row: 1, column: 27 },
@@ -233,7 +286,7 @@ mod tests {
             })
         );
         assert_eq!(
-            js.find_definition("b", to_pos(3, 24)),
+            js.find_definition(&str_to_defco("b", 3, 24)),
             Some(Identifier {
                 start: Point { row: 2, column: 16 },
                 end: Point { row: 2, column: 17 },
