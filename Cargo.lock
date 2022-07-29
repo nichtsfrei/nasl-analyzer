@@ -175,6 +175,7 @@ dependencies = [
  "num_cpus",
  "tracing",
  "tree-sitter",
+ "tree-sitter-c",
  "tree-sitter-nasl",
  "walkdir",
 ]
@@ -433,10 +434,20 @@ dependencies = [
 ]
 
 [[package]]
-name = "tree-sitter-nasl"
-version = "0.0.7"
+name = "tree-sitter-c"
+version = "0.20.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a8b9c89274485727609d47bb5ba73644f189a4cb81f3e9ec7838715358f7c747"
+checksum = "7bdc5574c6cbc39c409246caeb1dd4d3c4bd6d30d4e9b399776086c20365fd24"
+dependencies = [
+ "cc",
+ "tree-sitter",
+]
+
+[[package]]
+name = "tree-sitter-nasl"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "69a9c10808ccef93413f2aac953cbeb0f580c242361bf36c9f6afbe8a4e825af"
 dependencies = [
  "cc",
  "tree-sitter",

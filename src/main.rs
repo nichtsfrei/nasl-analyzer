@@ -23,7 +23,6 @@ fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
         .with_max_level(Level::TRACE)
         .finish();
     tracing::subscriber::set_global_default(subscriber)?;
-    
 
     info!("Starting nasl-analyzer");
     let (connection, io_threads) = Connection::stdio();
@@ -45,8 +44,7 @@ fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
     main_loop(connection, init_params)?;
     io_threads.join()?;
 
-    // Shut down gracefully.
-    eprintln!("shutting down server");
+    info!("shutting down server");
     Ok(())
 }
 
@@ -96,9 +94,15 @@ fn main_loop(
                     let set: Result<Settings, serde_json::Error> =
                         serde_json::from_value(not.clone().params);
                     if let Ok(set) = set {
-                        let paths = set.settings.clone().map(|i| i.paths).unwrap_or_default();
-                        cache.update_paths(paths);
-                        debug!("Updated cache ({}) for {:?}", cache.count(), set.settings);
+                        debug!("change configuration {:?}", set.settings);
+                        if let Some(paths) = set.settings {
+                            if let Some(paths) = paths.paths {
+                                cache.update_paths(paths);
+                            }
+                            if let Some(osc) = paths.openvas {
+                                cache.set_internal(&osc);
+                            }
+                        }
                     }
                 } else {
                     debug!("got notification: {:?}", not);

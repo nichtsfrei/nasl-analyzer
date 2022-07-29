@@ -23,9 +23,10 @@ trait NameContainer<T> {
     fn items(&self, name: String) -> Box<dyn Iterator<Item = T> + '_>;
 }
 
-trait NamePosContainer<T> {
+pub trait NamePosContainer<T> {
     fn items<'a>(&'a self, sp: &'a SearchParameter) -> Box<dyn Iterator<Item = Identifier> + '_>;
 }
+
 
 #[derive(Clone, Debug)]
 struct CallContainer {
@@ -47,9 +48,9 @@ impl NameContainer<(Identifier, Vec<Argument>)> for CallContainer {
 }
 
 #[derive(Clone, Debug)]
-struct DefContainer {
-    definitions: Vec<Jumpable>,
-    origin: String,
+pub struct DefContainer {
+    pub definitions: Vec<Jumpable>,
+    pub origin: String,
 }
 
 fn verify_args(
@@ -102,8 +103,8 @@ impl NamePosContainer<Identifier> for DefContainer {
         Box::new(hum)
     }
 }
+
 impl Lookup {
-    // currently we don't care about position since there is no function declaration in blocks
     pub fn find_calls<'a>(
         &'a self,
         name: &str,
@@ -160,7 +161,7 @@ mod tests {
     use tree_sitter::Point;
 
     use crate::{
-        types::{to_pos, Identifier}, interpret::tree,
+        types::{to_pos, Identifier}, interpret::nasl_tree,
     };
 
     use super::{Lookup, SearchParameter};
@@ -172,7 +173,7 @@ mod tests {
             test(testus);
             test("testus");
             "#;
-        let tree = tree(code.to_string(), None);
+        let tree = nasl_tree(code.to_string(), None).unwrap();
         let js = Lookup::new("", code, &tree.root_node());
         assert_eq!(js.calls.calls.len(), 3);
         assert_eq!(js.find_calls("test").collect_vec().len(), 2);
@@ -207,7 +208,7 @@ mod tests {
             if ((d = 12))
               test(d);
     "#;
-        let tree = tree(code.to_string(), None);
+        let tree = nasl_tree(code.to_string(), None).unwrap();
         let js = Lookup::new("aha.nasl", code, &tree.root_node());
         assert_eq!(
             js.find_definition(&str_to_defco("b", 3, 20)),
@@ -274,7 +275,7 @@ mod tests {
             testus = test(b);
             test(testus);
             "#;
-        let tree = tree(code.to_string(), None);
+        let tree = nasl_tree(code.to_string(), None).unwrap();
         let js = Lookup::new("aha.nasl", code, &tree.root_node());
         assert_eq!(js.definitions.definitions.len(), 4);
         assert_eq!(

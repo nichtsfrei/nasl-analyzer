@@ -1,5 +1,5 @@
-use std::fs;
-use tree_sitter::{Node, Parser, Point, Tree};
+use std::{error, fmt::Display, fs};
+use tree_sitter::{Language, Node, Parser, Point, Tree};
 
 use crate::{
     lookup::{Lookup, SearchParameter},
@@ -13,12 +13,32 @@ pub struct Interpret {
     lookup: Lookup,
 }
 
-pub fn tree(code: String, previous: Option<&Tree>) -> Tree {
+#[derive(Debug)]
+pub enum Error {
+    LanguageError,
+    ParseError,
+}
+
+impl Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "An error occured while parsing.")
+    }
+}
+impl error::Error for Error {}
+
+pub fn tree(language: Language, code: &str, previous: Option<&Tree>) -> Result<Tree, Error> {
     let mut parser = Parser::new();
-    parser
-        .set_language(tree_sitter_nasl::language())
-        .expect("Error loading NASL grammar");
-    parser.parse(code, previous).expect("Error parsing file")
+    match parser.set_language(language) {
+        Ok(_) => parser
+            .parse(code, previous)
+            .map(Ok)
+            .unwrap_or(Err(Error::ParseError)),
+        Err(_) => Err(Error::LanguageError),
+    }
+}
+
+pub fn nasl_tree(code: String, previous: Option<&Tree>) -> Result<Tree, Error> {
+    tree(tree_sitter_nasl::language(), &code, previous)
 }
 
 fn find_identifier(pos: f32, code: &str, n: &Node<'_>) -> Option<String> {
@@ -38,26 +58,27 @@ fn find_identifier(pos: f32, code: &str, n: &Node<'_>) -> Option<String> {
 }
 
 // TODO change signature
-pub fn new(origin: String, code: String) -> Interpret {
-    let tree = tree(code.clone(), None);
-    Interpret {
+pub fn new(origin: String, code: String) -> Result<Interpret, Error> {
+    let tree = nasl_tree(code.clone(), None)?;
+    Ok(Interpret {
         code: code.clone(),
         tree: tree.clone(),
         lookup: Lookup::new(&origin, &code, &tree.root_node()),
-    }
+    })
 }
 
-pub fn from_path(path: &str) -> Result<Interpret, std::io::Error> {
-    fs::read_to_string(path).map(|code| new(path.to_string(), code))
+pub fn from_path(path: &str) -> Result<Interpret, Box<dyn error::Error>> {
+    let code = fs::read_to_string(path)?;
+    let r = new(path.to_string(), code)?;
+    Ok(r)
+}
+
+pub trait FindDefinitionExt {
+    fn find_definition(&self, name: &SearchParameter) -> Vec<Point>;
 }
 
 impl Interpret {
-    pub fn identifier(
-        &self,
-        origin: &str,
-        line: usize,
-        column: usize,
-    ) -> Option<SearchParameter> {
+    pub fn identifier(&self, origin: &str, line: usize, column: usize) -> Option<SearchParameter> {
         let pos = to_pos(line, column);
         return find_identifier(pos, &self.code, &self.tree.root_node().clone()).map(|name| {
             SearchParameter {
@@ -66,15 +87,6 @@ impl Interpret {
                 pos,
             }
         });
-    }
-
-    pub fn find_definition(&self, name: &SearchParameter) -> Vec<Point> {
-        self.lookup
-            .find_definition(name)
-            .map(|i| i.start)
-            .iter()
-            .copied()
-            .collect()
     }
 
     pub fn includes<'a>(&'a self) -> impl Iterator<Item = &String> + 'a {
@@ -89,11 +101,22 @@ impl Interpret {
     }
 }
 
+impl FindDefinitionExt for Interpret {
+    fn find_definition(&self, name: &SearchParameter) -> Vec<Point> {
+        self.lookup
+            .find_definition(name)
+            .map(|i| i.start)
+            .iter()
+            .copied()
+            .collect()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use tree_sitter::Point;
 
-    use crate::interpret::new;
+    use crate::interpret::{new, FindDefinitionExt};
 
     #[test]
     fn global_definitions() {
@@ -107,7 +130,7 @@ mod tests {
             test(testus);
             "#
             .to_string(),
-        );
+        ).unwrap();
         let testus = result.identifier("/tmp/test.nasl", 5, 18);
         assert_eq!(
             result.identifier("/tmp/test.nasl", 5, 14).map(|i| i.name),
