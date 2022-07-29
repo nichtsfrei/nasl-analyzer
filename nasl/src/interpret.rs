@@ -1,4 +1,5 @@
 use std::{error, fmt::Display, fs};
+use tracing::warn;
 use tree_sitter::{Language, Node, Parser, Point, Tree};
 
 use crate::{
@@ -8,8 +9,6 @@ use crate::{
 
 #[derive(Clone, Debug)]
 pub struct Interpret {
-    code: String,
-    tree: Tree,
     lookup: Lookup,
 }
 
@@ -58,18 +57,16 @@ fn find_identifier(pos: f32, code: &str, n: &Node<'_>) -> Option<String> {
 }
 
 // TODO change signature
-pub fn new(origin: String, code: String) -> Result<Interpret, Error> {
-    let tree = nasl_tree(code.clone(), None)?;
+pub fn new(origin: String, code: &str) -> Result<Interpret, Error> {
+    let tree = nasl_tree(code.to_string(), None)?;
     Ok(Interpret {
-        code: code.clone(),
-        tree: tree.clone(),
-        lookup: Lookup::new(&origin, &code, &tree.root_node()),
+        lookup: Lookup::new(&origin, code, &tree.root_node()),
     })
 }
 
-pub fn from_path(path: &str) -> Result<Interpret, Box<dyn error::Error>> {
-    let code = fs::read_to_string(path)?;
-    let r = new(path.to_string(), code)?;
+pub fn from_path(path: &str) -> Result<(String, Interpret), Box<dyn error::Error>> {
+    let code: String = fs::read(path).map(|bs| bs.iter().map(|&b| b as char).collect())?;
+    let r = (code.clone(), new(path.to_string(), &code)?);
     Ok(r)
 }
 
@@ -78,15 +75,29 @@ pub trait FindDefinitionExt {
 }
 
 impl Interpret {
-    pub fn identifier(&self, origin: &str, line: usize, column: usize) -> Option<SearchParameter> {
+    pub fn identifier(
+        &self,
+        origin: &str,
+        code: &str,
+        line: usize,
+        column: usize,
+    ) -> Option<SearchParameter> {
         let pos = to_pos(line, column);
-        return find_identifier(pos, &self.code, &self.tree.root_node().clone()).map(|name| {
-            SearchParameter {
-                origin: origin.to_string(),
-                name,
-                pos,
+        match nasl_tree(code.to_string(), None) {
+            Ok(tree) => {
+                return find_identifier(pos, code, &tree.root_node().clone()).map(|name| {
+                    SearchParameter {
+                        origin: origin.to_string(),
+                        name,
+                        pos,
+                    }
+                });
             }
-        });
+            Err(err) => {
+                warn!("unable to parse {origin}: {err}");
+                None
+            }
+        }
     }
 
     pub fn includes<'a>(&'a self) -> impl Iterator<Item = &String> + 'a {
@@ -120,20 +131,20 @@ mod tests {
 
     #[test]
     fn global_definitions() {
-        let result = new(
-            "/tmp/test.nasl".to_string(),
-            r#"
+        let code = r#"
             function test(a) {
                 return a;
             }
             testus = test(12);
             test(testus);
             "#
-            .to_string(),
-        ).unwrap();
-        let testus = result.identifier("/tmp/test.nasl", 5, 18);
+        .to_string();
+        let result = new("/tmp/test.nasl".to_string(), &code).unwrap();
+        let testus = result.identifier("/tmp/test.nasl", &code, 5, 18);
         assert_eq!(
-            result.identifier("/tmp/test.nasl", 5, 14).map(|i| i.name),
+            result
+                .identifier("/tmp/test.nasl", &code, 5, 14)
+                .map(|i| i.name),
             Some("test".to_string())
         );
         assert_eq!(testus.clone().map(|i| i.name), Some("testus".to_string()));

@@ -54,8 +54,8 @@ impl ToResponseExt<GotoDefinitionParams, GotoDefinitionResponse> for Cache {
         let line = tdp.position.line as usize;
         let character = tdp.position.character as usize;
         let path = tdp.text_document.uri.path();
-        let inter = self.update(path)?;
-        let name = inter.identifier(path, line, character)?;
+        let (code, inter) = self.update(path)?;
+        let name = inter.identifier(path, &code, line, character)?;
         debug!("looking for {}({line}:{character}) in {path}", name.name);
 
         let mut found: Vec<Location> = inter

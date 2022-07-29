@@ -90,7 +90,10 @@ impl Interpreter {
                     start: *start,
                     end: Point::default(),
                 };
-        debug!("add {} as internal function", id.identifier.clone().unwrap_or_default());
+                debug!(
+                    "add {} as internal function",
+                    id.identifier.clone().unwrap_or_default()
+                );
                 Jumpable::FunDef(id, vec![])
             }));
         }
@@ -103,7 +106,10 @@ impl Interpreter {
     }
 
     pub fn find_definition(&self, sp: &SearchParameter) -> Vec<(String, Point)> {
-        self.definitions.items(sp).map(|x| (self.definitions.origin.clone(), x.start)).collect()
+        self.definitions
+            .items(sp)
+            .map(|x| (self.definitions.origin.clone(), x.start))
+            .collect()
     }
 }
 
@@ -128,6 +134,9 @@ mod tests {
             name: "script_name".to_string(),
             pos: 0.0,
         };
-        assert_eq!(ut.find_definition(&sp), vec![("nasl_init.c".to_string(), Point { row: 3, column: 41 })]);
+        assert_eq!(
+            ut.find_definition(&sp),
+            vec![("nasl_init.c".to_string(), Point { row: 3, column: 41 })]
+        );
     }
 }

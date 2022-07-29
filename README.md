@@ -7,6 +7,7 @@ It is in a very early state and currently only supports:
 
 Next steps:
 - add References handling
+- minimize memory footprint by not caching all plugins at once
 
 ## How to install
 
