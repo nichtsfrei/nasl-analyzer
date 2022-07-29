@@ -1,10 +1,7 @@
 use std::{error::Error, str::FromStr};
 
 use lsp_server::{Connection, Message, RequestId, Response};
-use nasl::{
-    cache::Cache,
-    types::to_pos,
-};
+use nasl::{cache::Cache, interpret::FindDefinitionExt, types::to_pos};
 
 use lsp_types::{GotoDefinitionParams, GotoDefinitionResponse, Location, Url};
 use tracing::debug;
@@ -95,6 +92,16 @@ impl ToResponseExt<GotoDefinitionParams, GotoDefinitionResponse> for Cache {
                 .filter_map(|(p, _)| location(p, &Point::default()))
                 .collect();
             found.extend(incs);
+        }
+        if found.is_empty() {
+            if let Some(i) = self.internal() {
+                found.extend(
+                    i.find_definition(&name)
+                        .iter()
+                        .filter_map(|(path, point)| location(path, point))
+                        .collect::<Vec<Location>>(),
+                )
+            }
         }
         debug!("found goto definitions: {:?}", found);
         Some(GotoDefinitionResponse::Array(found))

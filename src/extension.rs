@@ -3,14 +3,15 @@ use serde::{Deserialize, Serialize};
 use tree_sitter::Point;
 
 #[derive(Debug, PartialEq, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Paths {
-    pub paths: Vec<String>,
+    pub paths: Option<Vec<String>>,
+    pub openvas: Option<String>,
 }
 
 #[derive(Debug, PartialEq, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Settings {
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub settings: Option<Paths>,
 }
 

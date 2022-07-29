@@ -9,4 +9,5 @@ else if (a == 2){
 if ((d = 12)) {
   test(d);
 }
+display("hi");
 

@@ -3,13 +3,18 @@
 Is a lsp for nasl based upon rust-analyzer.
 
 It is in a very early state and currently only supports:
-- GotoDefinition to global functions and assignments within a single file
+- GotoDefinition 
 
 Next steps:
-- add configuration to define script paths to enable more broader lookups
-- load nasl scripts and includes based on include, script_dependencies to not have to load each nasl script but only used
-- make GotoDefinition work for local scopes (e.g. in blocks, parameter_lists, etc)
-- continue for more functions than GotoDefinition
+- add References handling
+
+## How to install
+
+```
+cargo install --path .
+```
+
+Installs `nasl-analyzer` into `$HOME/.cargo/bin`
 
 ## Include into neovim
 
@@ -20,8 +25,8 @@ In this example I assume that you have
 
 ```
 local configs = require("lspconfig.configs")
-
 local util = require("lspconfig.util")
+local os = require("os")
 
 local function create_config()
   return {
@@ -30,7 +35,10 @@ local function create_config()
       filetypes = { "nasl" },
       root_dir = util.root_pattern("example.nasl", ".git"),
       single_file_support = true,
-      settings = {},
+      settings = {
+          paths = {},
+          openvas = os.getenv("HOME") .. "/src/greenbone/openvas-scanner",
+      },
     },
     docs = {
       description = [[

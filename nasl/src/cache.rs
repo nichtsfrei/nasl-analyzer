@@ -7,12 +7,16 @@ use std::{
 use tracing::{debug, warn};
 use walkdir::WalkDir;
 
-use crate::interpret::{self, Interpret};
+use crate::{
+    interpret::{self, Interpret},
+    openvas_funcs,
+};
 
 #[derive(Debug)]
 pub struct Cache {
     paths: Vec<String>,
     plugins: HashMap<String, Interpret>,
+    internal: Option<openvas_funcs::Interpreter>,
 }
 
 impl Cache {
@@ -25,9 +29,13 @@ impl Cache {
             let ttx = tx.clone();
             let child = thread::spawn(move || {
                 while let Ok(x) = rxp.recv_timeout(Duration::from_secs(1)) {
-                    let inter = interpret::from_path(&x).expect("Expected parsed interpreter");
-                    if let Err(err) = ttx.send((x.clone(), inter)) {
-                        eprintln!("Unable to send {x} for caching. {err}");
+                    match interpret::from_path(&x) {
+                        Ok(inter) => {
+                            if let Err(err) = ttx.send((x.clone(), inter)) {
+                                warn!("unable to send {x} for caching: {err}");
+                            }
+                        }
+                        Err(err) => warn!("unable to create inter {x}: {err}"),
                     }
                 }
             });
@@ -42,11 +50,10 @@ impl Cache {
                 match r {
                     Ok(entry) => {
                         let fname = entry.path().to_string_lossy();
-                        // we only care for inc files due to nasl limitation on include
                         if fname.ends_with(".inc") || fname.ends_with(".nasl") {
                             if let Err(err) = children[i % worker_count].0.send(fname.to_string()) {
-                                eprintln!(
-                                    "Unable to send {fname} to child {}. {err}",
+                                warn!(
+                                    "unable to send {fname} to child {}: {err}",
                                     i % worker_count
                                 );
                             }
@@ -83,13 +90,40 @@ impl Cache {
 
     pub fn new(paths: Vec<String>) -> Cache {
         let plugins = Cache::load_plugins(paths.clone());
-        Cache { plugins, paths }
+        Cache {
+            plugins,
+            paths,
+            internal: None,
+        }
     }
 
     pub fn update(&mut self, path: &str) -> Option<Interpret> {
-        let inter = interpret::from_path(path).expect("Expected parsed interpreter");
-        self.plugins.insert(path.to_string(), inter.clone());
-        Some(inter)
+        match interpret::from_path(path) {
+            Ok(inter) => {
+                self.plugins.insert(path.to_string(), inter.clone());
+                Some(inter)
+            }
+            Err(err) => {
+                warn!("unable to uypdate {path}: {err}");
+                None
+            }
+        }
+    }
+
+    pub fn set_internal(&mut self, path: &str) {
+        let vp = if path.ends_with(".c") {
+            path.to_string()
+        } else {
+            format!("{}/nasl/nasl_init.c", path)
+        };
+        match openvas_funcs::Interpreter::from_path(&vp) {
+            Ok(i) => self.internal = Some(i),
+            Err(err) => warn!("enable to parse {path}: {err}"),
+        }
+    }
+
+    pub fn internal(&mut self) -> Option<openvas_funcs::Interpreter> {
+        self.internal.clone()
     }
 
     pub fn get(self, path: &str) -> Option<Interpret> {
