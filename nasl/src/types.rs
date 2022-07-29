@@ -40,4 +40,3 @@ impl Identifier {
         Some(name.to_string()) == self.identifier
     }
 }
-

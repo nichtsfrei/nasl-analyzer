@@ -27,7 +27,6 @@ pub trait NamePosContainer<T> {
     fn items<'a>(&'a self, sp: &'a SearchParameter) -> Box<dyn Iterator<Item = Identifier> + '_>;
 }
 
-
 #[derive(Clone, Debug)]
 struct CallContainer {
     calls: Vec<Jumpable>,
@@ -161,7 +160,8 @@ mod tests {
     use tree_sitter::Point;
 
     use crate::{
-        types::{to_pos, Identifier}, interpret::nasl_tree,
+        interpret::nasl_tree,
+        types::{to_pos, Identifier},
     };
 
     use super::{Lookup, SearchParameter};

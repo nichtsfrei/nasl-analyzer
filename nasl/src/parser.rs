@@ -30,7 +30,11 @@ pub struct Parser<'a> {
 
 impl<'a> Parser<'a> {
     pub fn new(origin: &'a str, code: &'a str, parent: Option<&'a Node<'a>>) -> Self {
-        Self { code, origin, parent }
+        Self {
+            code,
+            origin,
+            parent,
+        }
     }
 }
 

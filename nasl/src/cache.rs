@@ -21,7 +21,7 @@ pub struct Cache {
 
 impl Cache {
     fn load_plugins(paths: Vec<String>) -> HashMap<String, Interpret> {
-        let worker_count = num_cpus::get();
+        let worker_count = num_cpus::get() * 10;
         let (tx, rx) = mpsc::channel();
         let mut children = Vec::new();
         for _ in 0..worker_count {
@@ -30,7 +30,7 @@ impl Cache {
             let child = thread::spawn(move || {
                 while let Ok(x) = rxp.recv_timeout(Duration::from_secs(1)) {
                     match interpret::from_path(&x) {
-                        Ok(inter) => {
+                        Ok((_, inter)) => {
                             if let Err(err) = ttx.send((x.clone(), inter)) {
                                 warn!("unable to send {x} for caching: {err}");
                             }
@@ -97,11 +97,11 @@ impl Cache {
         }
     }
 
-    pub fn update(&mut self, path: &str) -> Option<Interpret> {
+    pub fn update(&mut self, path: &str) -> Option<(String, Interpret)> {
         match interpret::from_path(path) {
-            Ok(inter) => {
+            Ok((code, inter)) => {
                 self.plugins.insert(path.to_string(), inter.clone());
-                Some(inter)
+                Some((code, inter))
             }
             Err(err) => {
                 warn!("unable to uypdate {path}: {err}");

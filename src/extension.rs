@@ -1,4 +1,4 @@
-use lsp_types::{Range, Position};
+use lsp_types::{Position, Range};
 use serde::{Deserialize, Serialize};
 use tree_sitter::Point;
 
@@ -14,7 +14,6 @@ pub struct Paths {
 pub struct Settings {
     pub settings: Option<Paths>,
 }
-
 
 pub trait AsRangeExt {
     fn as_range(&self) -> Range;
@@ -34,4 +33,3 @@ impl AsRangeExt for Point {
         }
     }
 }
-
