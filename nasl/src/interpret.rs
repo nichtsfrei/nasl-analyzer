@@ -1,5 +1,5 @@
-use std::{error, fmt::Display, fs};
-use tracing::warn;
+use std::{error, fmt::Display, fs, path::Path};
+use tracing::{trace, warn};
 use tree_sitter::{Language, Node, Parser, Point, Tree};
 
 use crate::{
@@ -56,18 +56,46 @@ fn find_identifier(pos: f32, code: &str, n: &Node<'_>) -> Option<String> {
     None
 }
 
-pub fn new(origin: &str, code: &str) -> Result<NASLInterpreter, Box<dyn error::Error>> {
-    let tree = nasl_tree(code.to_string(), None)?;
-    Ok(NASLInterpreter {
-        lookup: Lookup::new(origin, code, &tree.root_node()),
-    })
-}
-
 pub trait FindDefinitionExt {
     fn find_definition(&self, name: &SearchParameter) -> Vec<Point>;
 }
 
 impl NASLInterpreter {
+    fn single(origin: &str, code: &str) -> Result<NASLInterpreter, Box<dyn error::Error>> {
+        let tree = nasl_tree(code.to_string(), None)?;
+        Ok(NASLInterpreter {
+            lookup: Lookup::new(origin, code, &tree.root_node()),
+        })
+    }
+
+    pub fn new(
+        path: &str,
+        paths: Vec<String>,
+        code: Option<&str>,
+    ) -> Result<Vec<NASLInterpreter>, Box<dyn error::Error>> {
+        let code = if let Some(code) = code {
+            code.to_string()
+        } else {
+            NASLInterpreter::read(path)?
+        };
+        let init = NASLInterpreter::single(path, &code)?;
+        let pths = paths.clone();
+        let incs: Vec<NASLInterpreter> = init
+            .includes()
+            .flat_map(|i| pths.iter().map(|p| format!("{p}/{}", i.clone())))
+            .map(|p| p.strip_prefix("file://").unwrap_or(&p).to_string())
+            .filter(|p| Path::new(p).exists())
+            .flat_map(|p| {
+                trace!("parsing {p}");
+                Self::new(&p, paths.clone(), None)
+            })
+            .flatten()
+            .collect();
+        let mut result = vec![init];
+        result.extend(incs);
+        Ok(result)
+    }
+
     pub fn read(path: &str) -> Result<String, std::io::Error> {
         fs::read(path).map(|bs| bs.iter().map(|&b| b as char).collect())
     }
@@ -127,7 +155,7 @@ impl FindDefinitionExt for NASLInterpreter {
 mod tests {
     use tree_sitter::Point;
 
-    use crate::interpret::{new, FindDefinitionExt, NASLInterpreter};
+    use crate::interpret::{FindDefinitionExt, NASLInterpreter};
 
     #[test]
     fn global_definitions() {
@@ -139,7 +167,7 @@ mod tests {
             test(testus);
             "#
         .to_string();
-        let result = new("/tmp/test.nasl", &code).unwrap();
+        let result = NASLInterpreter::single("/tmp/test.nasl", &code).unwrap();
         let testus = NASLInterpreter::identifier("/tmp/test.nasl", &code, 5, 18);
         assert_eq!(
             NASLInterpreter::identifier("/tmp/test.nasl", &code, 5, 14).map(|i| i.name),
