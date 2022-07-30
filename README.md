@@ -34,7 +34,7 @@ local function create_config()
     default_config = {
       cmd = { "nasl-analyzer" },
       filetypes = { "nasl" },
-      root_dir = util.root_pattern("example.nasl", ".git"),
+      root_dir = util.root_pattern("plugin_feed_info.inc", ".git"),
       single_file_support = true,
       settings = {
           paths = {},
