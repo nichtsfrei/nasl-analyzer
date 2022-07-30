@@ -11,7 +11,7 @@ use crate::{
 };
 
 #[derive(Clone, Debug)]
-pub struct Interpreter {
+pub struct OpenVASInterpreter {
     definitions: DefContainer,
 }
 
@@ -70,13 +70,13 @@ pub trait DefResponseContainer<T> {
     fn items<'a>(&'a self, sp: &'a SearchParameter) -> Box<dyn Iterator<Item = Point> + '_>;
 }
 
-impl Interpreter {
-    pub fn from_path(path: &str) -> Result<Interpreter, Box<dyn Error>> {
+impl OpenVASInterpreter {
+    pub fn from_path(path: &str) -> Result<OpenVASInterpreter, Box<dyn Error>> {
         debug!("parsing {} for internal functions", path);
         let code = fs::read_to_string(path)?;
-        Interpreter::new(path.to_string(), code)
+        OpenVASInterpreter::new(path.to_string(), code)
     }
-    pub fn new(origin: String, code: String) -> Result<Interpreter, Box<dyn Error>> {
+    pub fn new(origin: String, code: String) -> Result<OpenVASInterpreter, Box<dyn Error>> {
         //let code = fs::read_to_string(path)?;
         let tree = tree(tree_sitter_c::language(), &code, None)?;
         let rn = tree.root_node();
@@ -97,7 +97,7 @@ impl Interpreter {
                 Jumpable::FunDef(id, vec![])
             }));
         }
-        Ok(Interpreter {
+        Ok(OpenVASInterpreter {
             definitions: DefContainer {
                 origin,
                 definitions,
@@ -119,7 +119,7 @@ mod tests {
 
     use crate::lookup::SearchParameter;
 
-    use super::Interpreter;
+    use super::OpenVASInterpreter;
 
     #[test]
     fn funcnames() {
@@ -128,7 +128,7 @@ mod tests {
         #include <stdio.h>
         static init_func libfuncs[] = { {"script_name", script_name_internal} };
         "#;
-        let ut = Interpreter::new("nasl_init.c".to_string(), code.to_string()).unwrap();
+        let ut = OpenVASInterpreter::new("nasl_init.c".to_string(), code.to_string()).unwrap();
         let sp = SearchParameter {
             origin: "nasl_init.c".to_string(),
             name: "script_name".to_string(),

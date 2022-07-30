@@ -1,10 +1,13 @@
-use std::{error::Error, str::FromStr};
+use std::{error::Error, path::Path, str::FromStr};
 
 use lsp_server::{Connection, Message, RequestId, Response};
-use nasl::{cache::Cache, interpret::FindDefinitionExt, types::to_pos};
+use nasl::{
+    cache::Cache,
+    interpret::{self, FindDefinitionExt, NASLInterpreter},
+};
 
 use lsp_types::{GotoDefinitionParams, GotoDefinitionResponse, Location, Url};
-use tracing::debug;
+use tracing::{debug, warn, trace};
 use tree_sitter::Point;
 
 use crate::extension::AsRangeExt;
@@ -37,7 +40,7 @@ impl<'a> RequestResponseSender<'a> {
     }
 }
 
-fn location(path: &str, point: &Point) -> Option<Location> {
+fn location(path: String, point: &Point) -> Option<Location> {
     if let Ok(val) = Url::from_str(&format!("file://{}", path)) {
         return Some(Location {
             range: point.as_range(),
@@ -47,6 +50,36 @@ fn location(path: &str, point: &Point) -> Option<Location> {
     None
 }
 
+fn interprete(
+    path: &str,
+    paths: Vec<String>,
+    code: Option<&str>,
+) -> Result<Vec<NASLInterpreter>, Box<dyn Error>> {
+    let init = if let Some(code) = code {
+        interpret::new(path, code)
+    } else {
+        let code = NASLInterpreter::read(path)?;
+        interpret::new(path, &code)
+    }?;
+    let pths = paths.clone();
+    let incs: Vec<NASLInterpreter> = init
+        .includes()
+        .flat_map(|i| pths.iter().map(|p| format!("{p}/{}", i.clone())))
+        .map(|p| p.strip_prefix("file://").unwrap_or(&p).to_string())
+        .filter(|p| {
+            Path::new(p).exists()
+        })
+        .flat_map(|p| {
+            trace!("parsing {p}");
+            interprete(&p, paths.clone(), None)
+        })
+        .flatten()
+        .collect();
+    let mut result = vec![init];
+    result.extend(incs);
+    Ok(result)
+}
+
 impl ToResponseExt<GotoDefinitionParams, GotoDefinitionResponse> for Cache {
     fn handle(&mut self, params: GotoDefinitionParams) -> Option<GotoDefinitionResponse> {
         let tdp = params.text_document_position_params;
@@ -54,51 +87,42 @@ impl ToResponseExt<GotoDefinitionParams, GotoDefinitionResponse> for Cache {
         let line = tdp.position.line as usize;
         let character = tdp.position.character as usize;
         let path = tdp.text_document.uri.path();
-        let (code, inter) = self.update(path)?;
-        let name = inter.identifier(path, &code, line, character)?;
-        debug!("looking for {}({line}:{character}) in {path}", name.name);
-
-        let mut found: Vec<Location> = inter
-            .find_definition(&name)
+        let code = match NASLInterpreter::read(path) {
+            Ok(c) => Some(c),
+            Err(err) => {
+                warn!("unable to load {path}: {err}");
+                None
+            }
+        }?;
+        let sp = NASLInterpreter::identifier(path, &code, line, character)?;
+        let interprets: Vec<NASLInterpreter> = match interprete(path, self.paths.clone(), Some(&code)) {
+            Ok(i) => {
+                debug!("found {} interpreter", i.len());
+                i
+            }
+            Err(err) => {
+                warn!("no interpreter found for {path}: {err}");
+                vec![]
+            }
+        };
+        debug!("looking for {}({line}:{character}) in {path}", sp.name);
+        let mut found: Vec<Location> = interprets
             .iter()
-            .map(|p| Location {
-                range: p.as_range(),
-                uri: tdp.text_document.uri.clone(),
+            .map(|i| (i.clone().origin(), i.find_definition(&sp)))
+            .flat_map(|(origin, locations)| {
+                locations
+                    .iter()
+                    .filter_map(|i| location(origin.clone(), i))
+                    .collect::<Vec<Location>>()
             })
             .collect();
-        let fin: Vec<Location> = inter
-            .includes()
-            .flat_map(|i| self.find(i))
-            .map(|(p, i)| (p, i.find_definition(&name)))
-            .filter(|(_, v)| !v.is_empty())
-            .flat_map(|(k, v)| {
-                let result: Vec<Location> = v.iter().filter_map(|i| location(k, i)).collect();
-                result
-            })
-            .collect();
-        found.extend(fin);
-        if found.is_empty() {
-            let istr: Vec<String> = inter
-                .calls("include")
-                .filter(|(i, _)| i.in_pos(to_pos(line, character)))
-                .flat_map(|(_, p)| {
-                    let r: Vec<String> = p.iter().filter_map(|p| p.to_string()).collect();
-                    r
-                })
-                .collect();
-            let incs: Vec<Location> = istr
-                .iter()
-                .flat_map(|p| self.find(p))
-                .filter_map(|(p, _)| location(p, &Point::default()))
-                .collect();
-            found.extend(incs);
-        }
+
         if found.is_empty() {
             if let Some(i) = self.internal() {
                 found.extend(
-                    i.find_definition(&name)
+                    i.find_definition(&sp)
                         .iter()
-                        .filter_map(|(path, point)| location(path, point))
+                        .filter_map(|(path, point)| location(path.to_string(), point))
                         .collect::<Vec<Location>>(),
                 )
             }

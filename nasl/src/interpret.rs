@@ -8,7 +8,7 @@ use crate::{
 };
 
 #[derive(Clone, Debug)]
-pub struct Interpret {
+pub struct NASLInterpreter {
     lookup: Lookup,
 }
 
@@ -56,27 +56,27 @@ fn find_identifier(pos: f32, code: &str, n: &Node<'_>) -> Option<String> {
     None
 }
 
-// TODO change signature
-pub fn new(origin: String, code: &str) -> Result<Interpret, Error> {
+pub fn new(origin: &str, code: &str) -> Result<NASLInterpreter, Box<dyn error::Error>> {
     let tree = nasl_tree(code.to_string(), None)?;
-    Ok(Interpret {
-        lookup: Lookup::new(&origin, code, &tree.root_node()),
+    Ok(NASLInterpreter {
+        lookup: Lookup::new(origin, code, &tree.root_node()),
     })
-}
-
-pub fn from_path(path: &str) -> Result<(String, Interpret), Box<dyn error::Error>> {
-    let code: String = fs::read(path).map(|bs| bs.iter().map(|&b| b as char).collect())?;
-    let r = (code.clone(), new(path.to_string(), &code)?);
-    Ok(r)
 }
 
 pub trait FindDefinitionExt {
     fn find_definition(&self, name: &SearchParameter) -> Vec<Point>;
 }
 
-impl Interpret {
+impl NASLInterpreter {
+    pub fn read(path: &str) -> Result<String, std::io::Error> {
+        fs::read(path).map(|bs| bs.iter().map(|&b| b as char).collect())
+    }
+
+    pub fn origin(self) -> String {
+        self.lookup.origin()
+    }
+
     pub fn identifier(
-        &self,
         origin: &str,
         code: &str,
         line: usize,
@@ -112,7 +112,7 @@ impl Interpret {
     }
 }
 
-impl FindDefinitionExt for Interpret {
+impl FindDefinitionExt for NASLInterpreter {
     fn find_definition(&self, name: &SearchParameter) -> Vec<Point> {
         self.lookup
             .find_definition(name)
@@ -127,7 +127,7 @@ impl FindDefinitionExt for Interpret {
 mod tests {
     use tree_sitter::Point;
 
-    use crate::interpret::{new, FindDefinitionExt};
+    use crate::interpret::{new, FindDefinitionExt, NASLInterpreter};
 
     #[test]
     fn global_definitions() {
@@ -139,12 +139,10 @@ mod tests {
             test(testus);
             "#
         .to_string();
-        let result = new("/tmp/test.nasl".to_string(), &code).unwrap();
-        let testus = result.identifier("/tmp/test.nasl", &code, 5, 18);
+        let result = new("/tmp/test.nasl", &code).unwrap();
+        let testus = NASLInterpreter::identifier("/tmp/test.nasl", &code, 5, 18);
         assert_eq!(
-            result
-                .identifier("/tmp/test.nasl", &code, 5, 14)
-                .map(|i| i.name),
+            NASLInterpreter::identifier("/tmp/test.nasl", &code, 5, 14).map(|i| i.name),
             Some("test".to_string())
         );
         assert_eq!(testus.clone().map(|i| i.name), Some("testus".to_string()));
