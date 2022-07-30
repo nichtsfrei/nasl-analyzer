@@ -60,7 +60,7 @@ fn main_loop(
     let rrs = RequestResponseSender {
         connection: &connection,
     };
-    debug!("Initialized cache ({}) for {:?}", cache.count(), rp);
+    debug!("Initialized cache for {:?}", rp);
     for msg in &connection.receiver {
         match msg {
             Message::Request(req) => {

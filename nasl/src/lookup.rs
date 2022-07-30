@@ -151,6 +151,10 @@ impl Lookup {
             includes,
         }
     }
+
+    pub fn origin(self) -> String {
+        self.definitions.origin
+    }
 }
 
 #[cfg(test)]
