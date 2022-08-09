@@ -36,8 +36,8 @@ pub fn tree(language: Language, code: &str, previous: Option<&Tree>) -> Result<T
     }
 }
 
-pub fn nasl_tree(code: String, previous: Option<&Tree>) -> Result<Tree, Error> {
-    tree(tree_sitter_nasl::language(), &code, previous)
+pub fn nasl_tree(code: &str, previous: Option<&Tree>) -> Result<Tree, Error> {
+    tree(tree_sitter_nasl::language(), code, previous)
 }
 
 fn find_identifier(pos: f32, code: &str, n: &Node<'_>) -> Option<Range<usize>> {
@@ -62,7 +62,7 @@ pub trait FindDefinitionExt {
 
 impl NASLInterpreter {
     fn single(origin: &str, code: &str) -> Result<NASLInterpreter, Box<dyn error::Error>> {
-        let tree = nasl_tree(code.to_string(), None)?;
+        let tree = nasl_tree(code, None)?;
         Ok(NASLInterpreter {
             lookup: Lookup::new(origin, code, &tree.root_node()),
         })
@@ -111,7 +111,7 @@ impl NASLInterpreter {
         column: usize,
     ) -> Option<SearchParameter<'a>> {
         let pos = to_pos(line, column);
-        match nasl_tree(code.to_string(), None) {
+        match nasl_tree(code, None) {
             Ok(tree) => {
                 return find_identifier(pos, code, &tree.root_node().clone()).map(|name| {
                     SearchParameter {

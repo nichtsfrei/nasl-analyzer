@@ -59,12 +59,12 @@ fn verify_args(
     defco: &SearchParameter,
 ) -> Vec<Identifier> {
     let mut result = vec![];
-    if id.matches(&defco.name) {
+    if id.matches(defco.name) {
         result.push(id.clone());
     }
     if origin == defco.origin && id.in_pos(defco.pos) {
         for p in args {
-            if p.matches(&defco.name) {
+            if p.matches(defco.name) {
                 result.push(p.clone());
             }
         }
@@ -91,7 +91,7 @@ impl NamePosContainer<Identifier> for DefContainer {
                 Jumpable::Assign(id) => {
                     // TODO when need the information if it is in the same file
                     // if so control that the definition was done before
-                    if id.matches(&sp.name) {
+                    if id.matches(sp.name) {
                         result.push(id.clone());
                     }
                 }
@@ -177,7 +177,7 @@ mod tests {
             test(testus);
             test("testus");
             "#;
-        let tree = nasl_tree(code.to_string(), None).unwrap();
+        let tree = nasl_tree(code, None).unwrap();
         let js = Lookup::new("", code, &tree.root_node());
         assert_eq!(js.calls.calls.len(), 3);
         assert_eq!(js.find_calls("test").collect_vec().len(), 2);
@@ -212,7 +212,7 @@ mod tests {
             if ((d = 12))
               test(d);
     "#;
-        let tree = nasl_tree(code.to_string(), None).unwrap();
+        let tree = nasl_tree(code, None).unwrap();
         let js = Lookup::new("aha.nasl", code, &tree.root_node());
         assert_eq!(
             js.find_definition(&str_to_defco("b", 3, 20)),
@@ -279,7 +279,7 @@ mod tests {
             testus = test(b);
             test(testus);
             "#;
-        let tree = nasl_tree(code.to_string(), None).unwrap();
+        let tree = nasl_tree(code, None).unwrap();
         let js = Lookup::new("aha.nasl", code, &tree.root_node());
         assert_eq!(js.definitions.definitions.len(), 4);
         assert_eq!(
