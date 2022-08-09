@@ -64,7 +64,7 @@ impl ToResponseExt<GotoDefinitionParams, GotoDefinitionResponse> for Cache {
                 None
             }
         }?;
-        let sp = NASLInterpreter::identifier(path, &code, line, character)?;
+        let sp = NASLInterpreter::search_parameter(path, &code, line, character)?;
         let interprets: Vec<NASLInterpreter> =
             match NASLInterpreter::new(path, self.paths.clone(), Some(&code)) {
                 Ok(i) => {

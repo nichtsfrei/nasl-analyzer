@@ -131,7 +131,7 @@ mod tests {
         let ut = OpenVASInterpreter::new("nasl_init.c".to_string(), code.to_string()).unwrap();
         let sp = SearchParameter {
             origin: "nasl_init.c",
-            name: "script_name".to_string(),
+            name: "script_name",
             pos: 0.0,
         };
         assert_eq!(

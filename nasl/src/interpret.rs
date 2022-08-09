@@ -1,4 +1,4 @@
-use std::{error, fmt::Display, fs, path::Path};
+use std::{error, fmt::Display, fs, path::Path, ops::Range};
 use tracing::{trace, warn};
 use tree_sitter::{Language, Node, Parser, Point, Tree};
 
@@ -40,12 +40,12 @@ pub fn nasl_tree(code: String, previous: Option<&Tree>) -> Result<Tree, Error> {
     tree(tree_sitter_nasl::language(), &code, previous)
 }
 
-fn find_identifier(pos: f32, code: &str, n: &Node<'_>) -> Option<String> {
+fn find_identifier(pos: f32, code: &str, n: &Node<'_>) -> Option<Range<usize>> {
     let nspos = to_pos(n.range().start_point.row, n.range().start_point.column);
     let nepos = to_pos(n.range().end_point.row, n.range().end_point.column);
     if pos >= nspos && pos <= nepos {
         if n.child_count() == 0 && n.kind() == "identifier" {
-            return Some(code[n.byte_range()].to_string());
+            return Some(n.byte_range());
         }
         let crsr = &mut n.walk();
         let mut icidx = n
@@ -104,7 +104,7 @@ impl NASLInterpreter {
         self.lookup.origin()
     }
 
-    pub fn identifier<'a>(
+    pub fn search_parameter<'a>(
         origin: &'a str,
         code: &'a str,
         line: usize,
@@ -116,7 +116,7 @@ impl NASLInterpreter {
                 return find_identifier(pos, code, &tree.root_node().clone()).map(|name| {
                     SearchParameter {
                         origin,
-                        name,
+                        name: &code[name],
                         pos,
                     }
                 });
@@ -168,12 +168,12 @@ mod tests {
             "#
         .to_string();
         let result = NASLInterpreter::single("/tmp/test.nasl", &code).unwrap();
-        let testus = NASLInterpreter::identifier("/tmp/test.nasl", &code, 5, 18);
+        let testus = NASLInterpreter::search_parameter("/tmp/test.nasl", &code, 5, 18);
         assert_eq!(
-            NASLInterpreter::identifier("/tmp/test.nasl", &code, 5, 14).map(|i| i.name),
-            Some("test".to_string())
+            NASLInterpreter::search_parameter("/tmp/test.nasl", &code, 5, 14).map(|i| i.name),
+            Some("test")
         );
-        assert_eq!(testus.clone().map(|i| i.name), Some("testus".to_string()));
+        assert_eq!(testus.clone().map(|i| i.name), Some("testus"));
         assert_eq!(
             result.find_definition(&testus.unwrap())[0],
             Point { row: 4, column: 12 }
