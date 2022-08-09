@@ -104,18 +104,18 @@ impl NASLInterpreter {
         self.lookup.origin()
     }
 
-    pub fn identifier(
-        origin: &str,
-        code: &str,
+    pub fn identifier<'a>(
+        origin: &'a str,
+        code: &'a str,
         line: usize,
         column: usize,
-    ) -> Option<SearchParameter> {
+    ) -> Option<SearchParameter<'a>> {
         let pos = to_pos(line, column);
         match nasl_tree(code.to_string(), None) {
             Ok(tree) => {
                 return find_identifier(pos, code, &tree.root_node().clone()).map(|name| {
                     SearchParameter {
-                        origin: origin.to_string(),
+                        origin,
                         name,
                         pos,
                     }

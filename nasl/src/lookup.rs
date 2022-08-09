@@ -6,8 +6,8 @@ use crate::{
 };
 
 #[derive(Debug, PartialEq, Clone)]
-pub struct SearchParameter {
-    pub origin: String,
+pub struct SearchParameter<'a> {
+    pub origin: &'a str,
     pub name: String,
     pub pos: f32,
 }
@@ -188,7 +188,7 @@ mod tests {
 
     fn str_to_defco(name: &str, line: usize, column: usize) -> SearchParameter {
         SearchParameter {
-            origin: "aha.nasl".to_string(),
+            origin: "aha.nasl",
             name: name.to_string(),
             pos: to_pos(line, column),
         }
