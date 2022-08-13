@@ -1,40 +1,10 @@
 use tree_sitter::Node;
 
 use crate::{
-    lookup::Lookup,
+    lookup::{Lookup, CodeContainer, Jumpable},
     types::{Argument, Identifier},
 };
 
-#[derive(Clone, Debug)]
-pub enum Jumpable {
-    FunDef(Identifier, Vec<Identifier>),
-    IfDef(Identifier, Vec<Identifier>),
-    Assign(Identifier),
-    Block((Identifier, Lookup)),
-    CallExpression(Identifier, Vec<Argument>),
-}
-
-impl Jumpable {
-    pub fn is_definition(&self) -> bool {
-        !matches!(self, Jumpable::CallExpression(_, _))
-    }
-}
-
-pub struct Parser<'a> {
-    code: &'a str,
-    origin: &'a str,
-    parent: Option<&'a Node<'a>>,
-}
-
-impl<'a> Parser<'a> {
-    pub fn new(origin: &'a str, code: &'a str, parent: Option<&'a Node<'a>>) -> Self {
-        Self {
-            code,
-            origin,
-            parent,
-        }
-    }
-}
 
 // walk_named_children uses a cursor of a node, walks through named_children and calls f with the childs to return its result
 fn walk_named_children<T>(n: Node<'_>, f: impl Fn(Node, &mut Vec<T>)) -> Vec<T> {
@@ -48,11 +18,11 @@ fn walk_named_children<T>(n: Node<'_>, f: impl Fn(Node, &mut Vec<T>)) -> Vec<T> 
 }
 
 trait IdentifierExt {
-    fn identifier(self, container: &Parser<'_>) -> Option<Identifier>;
+    fn identifier(self, container: &CodeContainer<'_>) -> Option<Identifier>;
 }
 
 impl IdentifierExt for Node<'_> {
-    fn identifier(self, container: &Parser<'_>) -> Option<Identifier> {
+    fn identifier(self, container: &CodeContainer<'_>) -> Option<Identifier> {
         if self.kind() == "identifier" {
             return Some(Identifier {
                 start: self.start_position(),
@@ -65,12 +35,12 @@ impl IdentifierExt for Node<'_> {
 }
 
 trait FuncDeclaratorExt {
-    fn func_declarator(self, container: &Parser<'_>) -> Option<Jumpable>;
-    fn parameter_list(self, container: &Parser<'_>) -> Vec<Identifier>;
+    fn func_declarator(self, container: &CodeContainer<'_>) -> Option<Jumpable>;
+    fn parameter_list(self, container: &CodeContainer<'_>) -> Vec<Identifier>;
 }
 
 impl FuncDeclaratorExt for Node<'_> {
-    fn func_declarator(self, container: &Parser<'_>) -> Option<Jumpable> {
+    fn func_declarator(self, container: &CodeContainer<'_>) -> Option<Jumpable> {
         if self.kind() == "function_declarator" {
             if let Some(c) = self.child_by_field_name("declarator") {
                 if let Some(x) = c.identifier(container) {
@@ -93,7 +63,7 @@ impl FuncDeclaratorExt for Node<'_> {
         None
     }
 
-    fn parameter_list(self, container: &Parser<'_>) -> Vec<Identifier> {
+    fn parameter_list(self, container: &CodeContainer<'_>) -> Vec<Identifier> {
         if self.kind() == "parameter_list" {
             return walk_named_children(self, |n, r| {
                 if let Some(i) = n.identifier(container) {
@@ -106,15 +76,15 @@ impl FuncDeclaratorExt for Node<'_> {
 }
 
 trait FuncDefExt {
-    fn func_def(self, container: &Parser<'_>) -> Vec<Jumpable>;
+    fn func_def(self, container: &CodeContainer<'_>) -> Vec<Jumpable>;
 }
 
 impl FuncDefExt for Node<'_> {
-    fn func_def(self, container: &Parser<'_>) -> Vec<Jumpable> {
+    fn func_def(self, container: &CodeContainer<'_>) -> Vec<Jumpable> {
         if self.kind() == "function_definition" {
             return walk_named_children(self, |c, r| {
                 if let Some(fd) =
-                    c.func_declarator(&Parser::new(container.origin, container.code, Some(&self)))
+                    c.func_declarator(&CodeContainer::new(container.origin, container.code, Some(&self)))
                 {
                     r.push(fd);
                 } else {
@@ -127,11 +97,11 @@ impl FuncDefExt for Node<'_> {
 }
 
 trait CompoundExt {
-    fn compound_statement(self, container: &Parser<'_>) -> Vec<Jumpable>;
+    fn compound_statement(self, container: &CodeContainer<'_>) -> Vec<Jumpable>;
 }
 
 impl CompoundExt for Node<'_> {
-    fn compound_statement(self, container: &Parser<'_>) -> Vec<Jumpable> {
+    fn compound_statement(self, container: &CodeContainer<'_>) -> Vec<Jumpable> {
         if self.kind() == "compound_statement" {
             return vec![Jumpable::Block((
                 Identifier {
@@ -147,11 +117,11 @@ impl CompoundExt for Node<'_> {
 }
 
 trait AssignmentExpressionExt {
-    fn assignment_expression(self, container: &Parser<'_>) -> Vec<Jumpable>;
+    fn assignment_expression(self, container: &CodeContainer<'_>) -> Vec<Jumpable>;
 }
 
 impl AssignmentExpressionExt for Node<'_> {
-    fn assignment_expression(self, container: &Parser<'_>) -> Vec<Jumpable> {
+    fn assignment_expression(self, container: &CodeContainer<'_>) -> Vec<Jumpable> {
         if self.kind() == "assignment_expression" {
             // we only care for the left operator since we are just interested to jump to
             // initial definitions anyway
@@ -166,11 +136,11 @@ impl AssignmentExpressionExt for Node<'_> {
 }
 
 trait StringLiteralExt {
-    fn string_literal(self, container: &Parser<'_>) -> Option<Argument>;
+    fn string_literal(self, container: &CodeContainer<'_>) -> Option<Argument>;
 }
 
 impl StringLiteralExt for Node<'_> {
-    fn string_literal(self, container: &Parser<'_>) -> Option<Argument> {
+    fn string_literal(self, container: &CodeContainer<'_>) -> Option<Argument> {
         if self.kind() == "string_literal" {
             let rcrsr = &mut self.walk();
             let mut crsr = self.named_children(rcrsr);
@@ -189,12 +159,12 @@ impl StringLiteralExt for Node<'_> {
 }
 
 trait CallExpressionExt {
-    fn argument_list(self, container: &Parser<'_>) -> Vec<Argument>;
-    fn call_expression(self, container: &Parser<'_>) -> Vec<Jumpable>;
+    fn argument_list(self, container: &CodeContainer<'_>) -> Vec<Argument>;
+    fn call_expression(self, container: &CodeContainer<'_>) -> Vec<Jumpable>;
 }
 
 impl CallExpressionExt for Node<'_> {
-    fn argument_list(self, container: &Parser<'_>) -> Vec<Argument> {
+    fn argument_list(self, container: &CodeContainer<'_>) -> Vec<Argument> {
         if self.kind() == "argument_list" {
             return walk_named_children(self, |c, r| {
                 if let Some(sl) = c.string_literal(container) {
@@ -205,7 +175,7 @@ impl CallExpressionExt for Node<'_> {
         vec![]
     }
 
-    fn call_expression(self, container: &Parser<'_>) -> Vec<Jumpable> {
+    fn call_expression(self, container: &CodeContainer<'_>) -> Vec<Jumpable> {
         if self.kind() == "call_expression" {
             if let Some(nf) = self.child_by_field_name("function") {
                 if let Some(id) = nf.identifier(container) {
@@ -221,11 +191,11 @@ impl CallExpressionExt for Node<'_> {
 }
 
 trait ExpressionStatementExt {
-    fn expression_statement(self, container: &Parser<'_>) -> Vec<Jumpable>;
+    fn expression_statement(self, container: &CodeContainer<'_>) -> Vec<Jumpable>;
 }
 
 impl ExpressionStatementExt for Node<'_> {
-    fn expression_statement(self, container: &Parser<'_>) -> Vec<Jumpable> {
+    fn expression_statement(self, container: &CodeContainer<'_>) -> Vec<Jumpable> {
         if self.kind() == "expression_statement" {
             return walk_named_children(self, |c, r| {
                 r.extend(c.call_expression(container));
@@ -237,11 +207,11 @@ impl ExpressionStatementExt for Node<'_> {
 }
 
 trait BinaryExpressionExt {
-    fn binary_expression(self, container: &Parser<'_>) -> Vec<Jumpable>;
+    fn binary_expression(self, container: &CodeContainer<'_>) -> Vec<Jumpable>;
 }
 
 impl BinaryExpressionExt for Node<'_> {
-    fn binary_expression(self, container: &Parser<'_>) -> Vec<Jumpable> {
+    fn binary_expression(self, container: &CodeContainer<'_>) -> Vec<Jumpable> {
         if self.kind() == "binary_expression" {
             return walk_named_children(self, |c, r| {
                 r.extend(c.parenthesized_expression(container));
@@ -252,11 +222,11 @@ impl BinaryExpressionExt for Node<'_> {
 }
 
 trait ParenthesizedExpressionExt {
-    fn parenthesized_expression(self, container: &Parser<'_>) -> Vec<Jumpable>;
+    fn parenthesized_expression(self, container: &CodeContainer<'_>) -> Vec<Jumpable>;
 }
 
 impl ParenthesizedExpressionExt for Node<'_> {
-    fn parenthesized_expression(self, container: &Parser<'_>) -> Vec<Jumpable> {
+    fn parenthesized_expression(self, container: &CodeContainer<'_>) -> Vec<Jumpable> {
         if self.kind() == "parenthesized_expression" {
             return walk_named_children(self, |c, r| {
                 r.extend(c.binary_expression(container));
@@ -269,11 +239,11 @@ impl ParenthesizedExpressionExt for Node<'_> {
 }
 
 trait IfStatementExt {
-    fn if_statement(self, container: &Parser<'_>) -> Vec<Jumpable>;
+    fn if_statement(self, container: &CodeContainer<'_>) -> Vec<Jumpable>;
 }
 
 impl IfStatementExt for Node<'_> {
-    fn if_statement(self, container: &Parser<'_>) -> Vec<Jumpable> {
+    fn if_statement(self, container: &CodeContainer<'_>) -> Vec<Jumpable> {
         let mut result = vec![];
         if self.kind() == "if_statement" {
             if let Some(c) = self.child_by_field_name("condition") {
@@ -308,11 +278,11 @@ impl IfStatementExt for Node<'_> {
 }
 
 pub trait JumpableExt {
-    fn jumpable(self, container: &Parser<'_>) -> Vec<Jumpable>;
+    fn jumpable(self, container: &CodeContainer<'_>) -> Vec<Jumpable>;
 }
 
 impl JumpableExt for Node<'_> {
-    fn jumpable(self, container: &Parser<'_>) -> Vec<Jumpable> {
+    fn jumpable(self, container: &CodeContainer<'_>) -> Vec<Jumpable> {
         walk_named_children(self, |c, result| {
             result.extend(c.func_def(container));
             result.extend(c.expression_statement(container));
