@@ -193,6 +193,26 @@ mod tests {
             pos: to_pos(line, column),
         }
     }
+            
+
+    #[test]
+    fn binary_expression() {
+        let code = r#"
+            if (((d = 23) == 1) || ((e = 42) == 42)) {
+                f = d;
+            } 
+        "#;
+        let tree = nasl_tree(code, None).unwrap();
+        let js = Lookup::new("aha.nasl", code, &tree.root_node());
+        assert_eq!(
+            js.find_definition(&str_to_defco("d", 2, 20)),
+            Some(Identifier {
+                start: Point { row: 1, column: 18 },
+                end: Point { row: 1, column: 19 },
+                identifier: Some("d".to_string())
+            })
+        );
+    }
 
     #[test]
     fn if_handling() {
