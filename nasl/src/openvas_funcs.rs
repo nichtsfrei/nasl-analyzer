@@ -4,15 +4,15 @@ use tracing::debug;
 use tree_sitter::{Node, Point};
 
 use crate::{
-    interpret::tree,
-    lookup::{DefContainer, NamePosContainer, SearchParameter},
-    parser::Jumpable,
+    interpret::{tree, SearchParameter},
+    lookup::{find_definitions, Jumpable},
     types::Identifier,
 };
 
 #[derive(Clone, Debug)]
 pub struct OpenVASInterpreter {
-    definitions: DefContainer,
+    definitions: Vec<Jumpable>,
+    origin: String,
 }
 
 fn string_literal_range(r: &Range<usize>) -> Range<usize> {
@@ -98,18 +98,14 @@ impl OpenVASInterpreter {
             }));
         }
         Ok(OpenVASInterpreter {
-            definitions: DefContainer {
-                origin,
-                definitions,
-            },
+            definitions,
+            origin,
         })
     }
 
-    pub fn find_definition(&self, sp: &SearchParameter) -> Vec<(String, Point)> {
-        self.definitions
-            .items(sp)
-            .map(|x| (self.definitions.origin.clone(), x.start))
-            .collect()
+    pub fn find_origin_location<'a>(&'a self, sp: &'a SearchParameter) -> impl Iterator<Item = (String, Point)> + 'a {
+        find_definitions(&self.definitions, &self.origin, sp)
+            .map(|x| (self.origin.clone(), x.start))
     }
 }
 
@@ -117,7 +113,8 @@ impl OpenVASInterpreter {
 mod tests {
     use tree_sitter::Point;
 
-    use crate::lookup::SearchParameter;
+
+    use crate::interpret::SearchParameter;
 
     use super::OpenVASInterpreter;
 
@@ -135,8 +132,8 @@ mod tests {
             pos: 0.0,
         };
         assert_eq!(
-            ut.find_definition(&sp),
-            vec![("nasl_init.c".to_string(), Point { row: 3, column: 41 })]
+            ut.find_origin_location(&sp).next(),
+            Some(("nasl_init.c".to_string(), Point { row: 3, column: 41 })),
         );
     }
 }

@@ -3,7 +3,7 @@ use std::{error::Error, str::FromStr};
 use lsp_server::{Connection, Message, RequestId, Response};
 use nasl::{
     cache::Cache,
-    interpret::{FindDefinitionExt, NASLInterpreter},
+    interpret::NASLInterpreter,
 };
 
 use lsp_types::{GotoDefinitionParams, GotoDefinitionResponse, Location, Url};
@@ -40,7 +40,7 @@ impl<'a> RequestResponseSender<'a> {
     }
 }
 
-fn location(path: String, point: &Point) -> Option<Location> {
+fn location(path: &str, point: &Point) -> Option<Location> {
     if let Ok(val) = Url::from_str(&format!("file://{}", path)) {
         return Some(Location {
             range: point.as_range(),
@@ -66,7 +66,7 @@ impl ToResponseExt<GotoDefinitionParams, GotoDefinitionResponse> for Cache {
         }?;
         let sp = NASLInterpreter::search_parameter(path, &code, line, character)?;
         let interprets: Vec<NASLInterpreter> =
-            match NASLInterpreter::new(path, self.paths.clone(), Some(&code)) {
+            match NASLInterpreter::new_with_includes(path, self.paths.clone(), Some(&code)) {
                 Ok(i) => {
                     debug!("found {} interpreter", i.len());
                     i
@@ -79,11 +79,10 @@ impl ToResponseExt<GotoDefinitionParams, GotoDefinitionResponse> for Cache {
         debug!("looking for {}({line}:{character}) in {path}", sp.name);
         let mut found: Vec<Location> = interprets
             .iter()
-            .map(|i| (i.clone().origin(), i.find_definition(&sp)))
-            .flat_map(|(origin, locations)| {
-                locations
-                    .iter()
-                    .filter_map(|i| location(origin.clone(), i))
+            .flat_map(|i| {
+                let origin = i.clone().origin();
+                i.find_points(&sp)
+                    .filter_map(|i| location(&origin, &i))
                     .collect::<Vec<Location>>()
             })
             .collect();
@@ -91,9 +90,8 @@ impl ToResponseExt<GotoDefinitionParams, GotoDefinitionResponse> for Cache {
         if found.is_empty() {
             if let Some(i) = self.internal() {
                 found.extend(
-                    i.find_definition(&sp)
-                        .iter()
-                        .filter_map(|(path, point)| location(path.to_string(), point))
+                    i.find_origin_location(&sp)
+                        .filter_map(|(path, point)| location(&path, &point))
                         .collect::<Vec<Location>>(),
                 )
             }
