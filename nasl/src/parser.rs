@@ -1,5 +1,3 @@
-use itertools::{Either, Itertools};
-
 use tree_sitter::Node;
 
 use crate::{
@@ -38,6 +36,17 @@ impl<'a> Parser<'a> {
     }
 }
 
+// walk_named_children uses a cursor of a node, walks through named_children and calls f with the childs to return its result
+fn walk_named_children<T>(n: Node<'_>, f: impl Fn(Node, &mut Vec<T>)) -> Vec<T> {
+    let mut result = vec![];
+    let rcrsr = &mut n.walk();
+    let crsr = n.named_children(rcrsr);
+    for c in crsr {
+        f(c, &mut result)
+    }
+    result
+}
+
 trait IdentifierExt {
     fn identifier(self, container: &Parser<'_>) -> Option<Identifier>;
 }
@@ -63,26 +72,22 @@ trait FuncDeclaratorExt {
 impl FuncDeclaratorExt for Node<'_> {
     fn func_declarator(self, container: &Parser<'_>) -> Option<Jumpable> {
         if self.kind() == "function_declarator" {
-            let rcrsr = &mut self.walk();
-            let crsr = self.named_children(rcrsr);
-            let mut id = None;
-            let mut params = vec![];
-            for cc in crsr {
-                if let Some(x) = cc.identifier(container) {
-                    id = x.identifier;
-                } else {
-                    params = cc.parameter_list(container);
+            if let Some(c) = self.child_by_field_name("declarator") {
+                if let Some(x) = c.identifier(container) {
+                    let id = x.identifier;
+                    if let Some(p) = container.parent {
+                        return Some(Jumpable::FunDef(
+                            Identifier {
+                                start: p.start_position(),
+                                end: p.end_position(),
+                                identifier: id,
+                            },
+                            self.child_by_field_name("parameters")
+                                .map(|c| c.parameter_list(container))
+                                .unwrap_or_default(),
+                        ));
+                    }
                 }
-            }
-            if let Some(p) = container.parent {
-                return Some(Jumpable::FunDef(
-                    Identifier {
-                        start: p.start_position(),
-                        end: p.end_position(),
-                        identifier: id,
-                    },
-                    params,
-                ));
             }
         }
         None
@@ -90,9 +95,11 @@ impl FuncDeclaratorExt for Node<'_> {
 
     fn parameter_list(self, container: &Parser<'_>) -> Vec<Identifier> {
         if self.kind() == "parameter_list" {
-            let rcrsr = &mut self.walk();
-            let crsr = self.named_children(rcrsr);
-            return crsr.filter_map(|cc| cc.identifier(container)).collect();
+            return walk_named_children(self, |n, r| {
+                if let Some(i) = n.identifier(container) {
+                    r.push(i);
+                }
+            });
         }
         return vec![];
     }
@@ -105,21 +112,15 @@ trait FuncDefExt {
 impl FuncDefExt for Node<'_> {
     fn func_def(self, container: &Parser<'_>) -> Vec<Jumpable> {
         if self.kind() == "function_definition" {
-            let rcrsr = &mut self.walk();
-            let crsr = self.named_children(rcrsr);
-            let mr: Vec<Jumpable> = crsr
-                .filter_map(|c| {
+            return walk_named_children(self, |c, r| {
+                if let Some(fd) =
                     c.func_declarator(&Parser::new(container.origin, container.code, Some(&self)))
-                        .or_else(|| {
-                            let compounds = c.compound_statement(container);
-                            if compounds.is_empty() {
-                                return None;
-                            }
-                            Some(compounds[0].clone())
-                        })
-                })
-                .collect();
-            return mr;
+                {
+                    r.push(fd);
+                } else {
+                    r.extend(c.compound_statement(container));
+                }
+            });
         }
         vec![]
     }
@@ -152,11 +153,11 @@ trait AssignmentExpressionExt {
 impl AssignmentExpressionExt for Node<'_> {
     fn assignment_expression(self, container: &Parser<'_>) -> Vec<Jumpable> {
         if self.kind() == "assignment_expression" {
-            let rcrsr = &mut self.walk();
-            let crsr = self.named_children(rcrsr);
-            for c in crsr {
-                if let Some(x) = c.identifier(container) {
-                    return vec![Jumpable::Assign(x)];
+            // we only care for the left operator since we are just interested to jump to
+            // initial definitions anyway
+            if let Some(c) = self.child_by_field_name("left") {
+                if let Some(id) = c.identifier(container) {
+                    return vec![Jumpable::Assign(id)];
                 }
             }
         }
@@ -188,35 +189,31 @@ impl StringLiteralExt for Node<'_> {
 }
 
 trait CallExpressionExt {
-    fn argument_list(self, container: &Parser<'_>) -> Option<Vec<Argument>>;
+    fn argument_list(self, container: &Parser<'_>) -> Vec<Argument>;
     fn call_expression(self, container: &Parser<'_>) -> Vec<Jumpable>;
 }
 
 impl CallExpressionExt for Node<'_> {
-    fn argument_list(self, container: &Parser<'_>) -> Option<Vec<Argument>> {
+    fn argument_list(self, container: &Parser<'_>) -> Vec<Argument> {
         if self.kind() == "argument_list" {
-            let rcrsr = &mut self.walk();
-            let crsr = self.named_children(rcrsr);
-            let args: Vec<Argument> = crsr.filter_map(|i| i.string_literal(container)).collect();
-            return Some(args);
+            return walk_named_children(self, |c, r| {
+                if let Some(sl) = c.string_literal(container) {
+                    r.push(sl);
+                }
+            });
         }
-        None
+        vec![]
     }
 
     fn call_expression(self, container: &Parser<'_>) -> Vec<Jumpable> {
         if self.kind() == "call_expression" {
-            let rcrsr = &mut self.walk();
-            let crsr = self.named_children(rcrsr);
-            // TODO refactor
-            if let Some((Either::Left(id), Either::Right(arglist))) = crsr
-                .filter_map(|i| {
-                    i.identifier(container)
-                        .map(Either::Left)
-                        .or_else(|| i.argument_list(container).map(Either::Right))
-                })
-                .collect_tuple()
-            {
-                return vec![Jumpable::CallExpression(id, arglist)];
+            if let Some(nf) = self.child_by_field_name("function") {
+                if let Some(id) = nf.identifier(container) {
+                    if let Some(an) = self.child_by_field_name("arguments") {
+                        return vec![Jumpable::CallExpression(id, an.argument_list(container))];
+                    }
+                    return vec![Jumpable::CallExpression(id, vec![])];
+                }
             }
         }
         vec![]
@@ -230,16 +227,10 @@ trait ExpressionStatementExt {
 impl ExpressionStatementExt for Node<'_> {
     fn expression_statement(self, container: &Parser<'_>) -> Vec<Jumpable> {
         if self.kind() == "expression_statement" {
-            let rccrsr = &mut self.walk();
-            let ccrsr = self.named_children(rccrsr);
-            let combined = |i: Node<'_>| -> Vec<Jumpable> {
-                let mut result = i.call_expression(container);
-                result.extend(i.assignment_expression(container));
-                result
-            };
-
-            let result: Vec<Jumpable> = ccrsr.flat_map(combined).collect();
-            return result;
+            return walk_named_children(self, |c, r| {
+                r.extend(c.call_expression(container));
+                r.extend(c.assignment_expression(container))
+            });
         }
         vec![]
     }
@@ -251,16 +242,12 @@ trait BinaryExpressionExt {
 
 impl BinaryExpressionExt for Node<'_> {
     fn binary_expression(self, container: &Parser<'_>) -> Vec<Jumpable> {
-        let mut result = vec![];
         if self.kind() == "binary_expression" {
-            let rcrsr = &mut self.walk();
-            let crsr = self.named_children(rcrsr);
-            for c in crsr {
-                result.extend(c.parenthesized_expression(container));
-            }
-            return result;
+            return walk_named_children(self, |c, r| {
+                r.extend(c.parenthesized_expression(container));
+            });
         }
-        result
+        vec![]
     }
 }
 
@@ -270,17 +257,14 @@ trait ParenthesizedExpressionExt {
 
 impl ParenthesizedExpressionExt for Node<'_> {
     fn parenthesized_expression(self, container: &Parser<'_>) -> Vec<Jumpable> {
-        let mut result = vec![];
         if self.kind() == "parenthesized_expression" {
-            let rcrsr = &mut self.walk();
-            let crsr = self.named_children(rcrsr);
-            for c in crsr {
-                result.extend(c.binary_expression(container));
-                result.extend(c.assignment_expression(container));
-                result.extend(c.parenthesized_expression(container));
-            }
+            return walk_named_children(self, |c, r| {
+                r.extend(c.binary_expression(container));
+                r.extend(c.assignment_expression(container));
+                r.extend(c.parenthesized_expression(container));
+            });
         }
-        result
+        vec![]
     }
 }
 
@@ -329,15 +313,11 @@ pub trait JumpableExt {
 
 impl JumpableExt for Node<'_> {
     fn jumpable(self, container: &Parser<'_>) -> Vec<Jumpable> {
-        let mut result = vec![];
-        let rcrsr = &mut self.walk();
-        let crsr = self.named_children(rcrsr);
-        for c in crsr {
+        walk_named_children(self, |c, result| {
             result.extend(c.func_def(container));
             result.extend(c.expression_statement(container));
             result.extend(c.compound_statement(container));
             result.extend(c.if_statement(container));
-        }
-        result
+        })
     }
 }
