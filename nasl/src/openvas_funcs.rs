@@ -4,13 +4,12 @@ use tracing::debug;
 use tree_sitter::{Node, Point};
 
 use crate::{
-    interpret::{tree, SearchParameter},
-    lookup::{find_definitions, Jumpable},
+    interpret::{tree, SearchParameter, Jumpable, find_definitions},
     types::Identifier,
 };
 
 #[derive(Clone, Debug)]
-pub struct OpenVASInterpreter {
+pub struct OpenVASInBuildFunctions {
     definitions: Vec<Jumpable>,
     origin: String,
 }
@@ -70,13 +69,13 @@ pub trait DefResponseContainer<T> {
     fn items<'a>(&'a self, sp: &'a SearchParameter) -> Box<dyn Iterator<Item = Point> + '_>;
 }
 
-impl OpenVASInterpreter {
-    pub fn from_path(path: &str) -> Result<OpenVASInterpreter, Box<dyn Error>> {
+impl OpenVASInBuildFunctions {
+    pub fn from_path(path: &str) -> Result<OpenVASInBuildFunctions, Box<dyn Error>> {
         debug!("parsing {} for internal functions", path);
         let code = fs::read_to_string(path)?;
-        OpenVASInterpreter::new(path.to_string(), code)
+        OpenVASInBuildFunctions::new(path.to_string(), code)
     }
-    pub fn new(origin: String, code: String) -> Result<OpenVASInterpreter, Box<dyn Error>> {
+    pub fn new(origin: String, code: String) -> Result<OpenVASInBuildFunctions, Box<dyn Error>> {
         //let code = fs::read_to_string(path)?;
         let tree = tree(tree_sitter_c::language(), &code, None)?;
         let rn = tree.root_node();
@@ -97,7 +96,7 @@ impl OpenVASInterpreter {
                 Jumpable::FunDef(id, vec![])
             }));
         }
-        Ok(OpenVASInterpreter {
+        Ok(OpenVASInBuildFunctions {
             definitions,
             origin,
         })
@@ -116,7 +115,7 @@ mod tests {
 
     use crate::interpret::SearchParameter;
 
-    use super::OpenVASInterpreter;
+    use super::OpenVASInBuildFunctions;
 
     #[test]
     fn funcnames() {
@@ -125,7 +124,7 @@ mod tests {
         #include <stdio.h>
         static init_func libfuncs[] = { {"script_name", script_name_internal} };
         "#;
-        let ut = OpenVASInterpreter::new("nasl_init.c".to_string(), code.to_string()).unwrap();
+        let ut = OpenVASInBuildFunctions::new("nasl_init.c".to_string(), code.to_string()).unwrap();
         let sp = SearchParameter {
             origin: "nasl_init.c",
             name: "script_name",
