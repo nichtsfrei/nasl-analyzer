@@ -1,9 +1,24 @@
 use tree_sitter::Node;
 
 use crate::{
-    lookup::{Lookup, CodeContainer, Jumpable},
-    types::{Argument, Identifier},
+    types::{Argument, Identifier}, interpret::{NASLDefinitions, Jumpable},
 };
+// CodeContainer is used as a reference container to translate byte locations from a node to a comparable string
+pub struct CodeContainer<'a> {
+    pub code: &'a str,
+    pub origin: &'a str,
+    pub parent: Option<&'a Node<'a>>,
+}
+
+impl<'a> CodeContainer<'a> {
+    pub fn new(origin: &'a str, code: &'a str, parent: Option<&'a Node<'a>>) -> Self {
+        Self {
+            code,
+            origin,
+            parent,
+        }
+    }
+}
 
 
 // walk_named_children uses a cursor of a node, walks through named_children and calls f with the childs to return its result
@@ -109,7 +124,9 @@ impl CompoundExt for Node<'_> {
                     end: self.end_position(),
                     identifier: None,
                 },
-                Lookup::new(container.origin, container.code, &self),
+                // skip through by providing a reference of self and create
+                // a specialized lookup table
+                NASLDefinitions::new(container.origin, container.code, &self),
             ))];
         }
         vec![]

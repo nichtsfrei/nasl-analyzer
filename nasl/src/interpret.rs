@@ -3,9 +3,22 @@ use tracing::{trace, warn};
 use tree_sitter::{Language, Node, Point, Tree};
 
 use crate::{
-    lookup::{find_definitions, Lookup, Jumpable},
-    types::{to_pos, Argument, Identifier},
+    types::{to_pos, Identifier, Argument}, node_ext::{JumpableExt, CodeContainer},
 };
+#[derive(Clone, Debug)]
+pub enum Jumpable {
+    FunDef(Identifier, Vec<Identifier>),
+    IfDef(Identifier, Vec<Identifier>),
+    Assign(Identifier),
+    Block((Identifier, NASLDefinitions)),
+    CallExpression(Identifier, Vec<Argument>),
+}
+
+impl Jumpable {
+    pub fn is_definition(&self) -> bool {
+        !matches!(self, Jumpable::CallExpression(_, _))
+    }
+}
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct SearchParameter<'a> {
@@ -15,8 +28,11 @@ pub struct SearchParameter<'a> {
 }
 
 #[derive(Clone, Debug)]
-pub struct NASLInterpreter {
-    lookup: Lookup,
+pub struct NASLDefinitions {
+    pub definitions: Vec<Jumpable>,
+    pub origin: String,
+    pub includes: Vec<String>,
+    //lookup: NASLDefinitionContainer,
 }
 
 #[derive(Debug)]
@@ -31,6 +47,58 @@ impl Display for Error {
     }
 }
 impl error::Error for Error {}
+
+fn verify_args(
+    id: &Identifier,
+    origin: &str,
+    args: &Vec<Identifier>,
+    defco: &SearchParameter,
+) -> Vec<Identifier> {
+    let mut result = vec![];
+    if id.matches(defco.name) {
+        result.push(id.clone());
+    }
+    if origin == defco.origin && id.in_pos(defco.pos) {
+        for p in args {
+            if p.matches(defco.name) {
+                result.push(p.clone());
+            }
+        }
+    }
+    result
+}
+
+pub fn find_definitions<'a>(
+    definitions: &'a [Jumpable],
+    origin: &'a str,
+    sp: &'a SearchParameter,
+) -> impl Iterator<Item = Identifier> + 'a {
+    definitions.iter().flat_map(move |i| {
+        let mut result = vec![];
+        match i {
+            Jumpable::Block((id, js)) => {
+                if origin == sp.origin && id.in_pos(sp.pos) {
+                    result.extend(find_definitions(&js.definitions, &js.origin, sp));
+                }
+            }
+            Jumpable::IfDef(id, params) => {
+                result.extend(verify_args(id, origin, params, sp));
+            }
+            Jumpable::FunDef(id, params) => {
+                result.extend(verify_args(id, origin, params, sp));
+            }
+            Jumpable::Assign(id) => {
+                // TODO when need the information if it is in the same file
+                // if so control that the definition was done before
+                if id.matches(sp.name) {
+                    result.push(id.clone());
+                }
+            }
+            _ => {}
+        }
+        result
+    })
+}
 
 pub fn tree(language: Language, code: &str, previous: Option<&Tree>) -> Result<Tree, Error> {
     let mut parser = tree_sitter::Parser::new();
@@ -63,28 +131,52 @@ fn find_identifier(pos: f32, code: &str, n: &Node<'_>) -> Option<Range<usize>> {
     None
 }
 
-impl NASLInterpreter {
-    fn new(origin: &str, code: &str) -> Result<NASLInterpreter, Box<dyn error::Error>> {
+impl NASLDefinitions {
+
+pub fn new(origin: &str, code: &str, node: &Node<'_>) -> Self {
+        let mut definitions: Vec<Jumpable> = vec![];
+        let mut includes: Vec<String> = vec![];
+        let cp = &CodeContainer::new(origin, code, None);
+
+        for j in node.jumpable(cp) {
+            if j.is_definition() {
+                definitions.push(j);
+            } else if let Jumpable::CallExpression(id, params) = j {
+                if let Some(name) = id.clone().identifier {
+                    if &name == "include" {
+                        includes.extend(params.iter().filter_map(|i| i.to_string()));
+                    }
+                }
+            }
+        }
+
+        NASLDefinitions {
+            origin: origin.to_string(),
+            definitions,
+            includes,
+        }
+    }
+
+    fn new_parse_tree(origin: &str, code: &str) -> Result<Self, Box<dyn error::Error>> {
         let tree = nasl_tree(code, None)?;
         let node = &tree.root_node();
-        let lookup = Lookup::new(origin, code, node);
 
-        Ok(NASLInterpreter { lookup })
+        Ok(Self::new(origin, code, node))
     }
 
     pub fn new_with_includes(
         path: &str,
         paths: Vec<String>,
         code: Option<&str>,
-    ) -> Result<Vec<NASLInterpreter>, Box<dyn error::Error>> {
+    ) -> Result<Vec<NASLDefinitions>, Box<dyn error::Error>> {
         let code = if let Some(code) = code {
             code.to_string()
         } else {
-            NASLInterpreter::read(path)?
+            NASLDefinitions::read(path)?
         };
-        let init = NASLInterpreter::new(path, &code)?;
+        let init = NASLDefinitions::new_parse_tree(path, &code)?;
         let pths = paths.clone();
-        let incs: Vec<NASLInterpreter> = init
+        let incs: Vec<NASLDefinitions> = init
             .includes()
             .flat_map(|i| pths.iter().map(|p| format!("{p}/{}", i.clone())))
             .map(|p| p.strip_prefix("file://").unwrap_or(&p).to_string())
@@ -105,7 +197,7 @@ impl NASLInterpreter {
     }
 
     pub fn origin(self) -> String {
-        self.lookup.origin
+        self.origin
     }
 
     pub fn search_parameter<'a>(
@@ -133,25 +225,12 @@ impl NASLInterpreter {
     }
 
     pub fn includes<'a>(&'a self) -> impl Iterator<Item = &String> + 'a {
-        self.lookup.includes.iter()
+        self.includes.iter()
     }
 
-    pub fn calls<'a>(
-        &'a self,
-        name: &'a str,
-    ) -> impl Iterator<Item = (Identifier, Vec<Argument>)> + 'a {
-        self.lookup.calls.iter().flat_map(move |i| match i {
-            Jumpable::CallExpression(id, params) => {
-                if id.identifier == Some(name.to_string()) {
-                    return Some((id.clone(), params.clone()));
-                }
-                None
-            }
-            _ => None,
-        })
-    }
+    
     pub fn find_points<'a>(&'a self, sp: &'a SearchParameter) -> impl Iterator<Item = Point> + 'a {
-        find_definitions(&self.lookup.definitions, &self.lookup.origin, sp)
+        find_definitions(&self.definitions, &self.origin, sp)
             .map(|i| i.start)
     }
 }
@@ -161,7 +240,7 @@ mod tests {
     use tree_sitter::Point;
 
     use crate::{
-        interpret::NASLInterpreter,
+        interpret::NASLDefinitions,
         types::to_pos,
     };
 
@@ -177,10 +256,10 @@ mod tests {
             test(testus);
             "#
         .to_string();
-        let result = NASLInterpreter::new("/tmp/test.nasl", &code).unwrap();
-        let testus = NASLInterpreter::search_parameter("/tmp/test.nasl", &code, 5, 18);
+        let result = NASLDefinitions::new_parse_tree("/tmp/test.nasl", &code).unwrap();
+        let testus = NASLDefinitions::search_parameter("/tmp/test.nasl", &code, 5, 18);
         assert_eq!(
-            NASLInterpreter::search_parameter("/tmp/test.nasl", &code, 5, 14).map(|i| i.name),
+            NASLDefinitions::search_parameter("/tmp/test.nasl", &code, 5, 14).map(|i| i.name),
             Some("test")
         );
         assert_eq!(testus.clone().map(|i| i.name), Some("testus"));
@@ -190,20 +269,20 @@ mod tests {
         );
     }
 
-    #[test]
-    fn find_calls() {
-        let code = r#"
-            include("testus");
-            test(testus);
-            test("testus");
-            "#;
-        let js = NASLInterpreter::new("", code).unwrap();
-        assert_eq!(js.lookup.calls.len(), 3);
-        assert_eq!(js.calls("test").count(), 2);
-        assert_eq!(js.calls("include").count(), 1);
-        assert_eq!(js.lookup.includes.len(), 1);
-        assert_eq!(js.lookup.includes[0], "testus".to_string());
-    }
+    // #[test]
+    // fn find_calls() {
+    //     let code = r#"
+    //         include("testus");
+    //         test(testus);
+    //         test("testus");
+    //         "#;
+    //     let js = NASLInterpreter::new("", code).unwrap();
+    //     assert_eq!(js.lookup.calls.len(), 3);
+    //     assert_eq!(js.calls("test").count(), 2);
+    //     assert_eq!(js.calls("include").count(), 1);
+    //     assert_eq!(js.lookup.includes.len(), 1);
+    //     assert_eq!(js.lookup.includes[0], "testus".to_string());
+    // }
 
     fn str_to_defco(name: &str, line: usize, column: usize) -> SearchParameter {
         SearchParameter {
@@ -220,7 +299,7 @@ mod tests {
                 f = d;
             } 
         "#;
-        let js = NASLInterpreter::new("aha.nasl", code).unwrap();
+        let js = NASLDefinitions::new_parse_tree("aha.nasl", code).unwrap();
         assert_eq!(
             js.find_points(&str_to_defco("d", 2, 20)).next(),
             Some(Point { row: 1, column: 18 }),
@@ -245,7 +324,7 @@ mod tests {
             if ((d = 12))
               test(d);
     "#;
-        let js = NASLInterpreter::new("aha.nasl", code).unwrap();
+        let js = NASLDefinitions::new_parse_tree("aha.nasl", code).unwrap();
         assert_eq!(
             js.find_points(&str_to_defco("b", 3, 20)).next(),
             Some(Point { row: 2, column: 16 })
@@ -285,8 +364,8 @@ mod tests {
             testus = test(b);
             test(testus);
             "#;
-        let js = NASLInterpreter::new("aha.nasl", code).unwrap();
-        assert_eq!(js.lookup.definitions.len(), 4);
+        let js = NASLDefinitions::new_parse_tree("aha.nasl", code).unwrap();
+        assert_eq!(js.definitions.len(), 4);
         assert_eq!(
             js.find_points(&str_to_defco("a", 2, 21)).next(),
             Some(Point { row: 1, column: 26 }),

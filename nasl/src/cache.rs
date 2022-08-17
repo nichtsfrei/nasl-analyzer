@@ -1,11 +1,11 @@
 use tracing::warn;
 
-use crate::openvas_funcs::OpenVASInterpreter;
+use crate::openvas_funcs::OpenVASInBuildFunctions;
 
 #[derive(Debug)]
 pub struct Cache {
     pub paths: Vec<String>,
-    internal: Option<OpenVASInterpreter>,
+    internal: Option<OpenVASInBuildFunctions>,
 }
 
 impl Cache {
@@ -26,13 +26,13 @@ impl Cache {
         } else {
             format!("{}/nasl/nasl_init.c", path)
         };
-        match OpenVASInterpreter::from_path(&vp) {
+        match OpenVASInBuildFunctions::from_path(&vp) {
             Ok(i) => self.internal = Some(i),
             Err(err) => warn!("enable to parse {path}: {err}"),
         }
     }
 
-    pub fn internal(&mut self) -> Option<OpenVASInterpreter> {
+    pub fn internal(&mut self) -> Option<OpenVASInBuildFunctions> {
         self.internal.clone()
     }
 }

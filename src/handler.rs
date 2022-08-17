@@ -3,7 +3,7 @@ use std::{error::Error, str::FromStr};
 use lsp_server::{Connection, Message, RequestId, Response};
 use nasl::{
     cache::Cache,
-    interpret::NASLInterpreter,
+    interpret::NASLDefinitions,
 };
 
 use lsp_types::{GotoDefinitionParams, GotoDefinitionResponse, Location, Url};
@@ -57,16 +57,16 @@ impl ToResponseExt<GotoDefinitionParams, GotoDefinitionResponse> for Cache {
         let line = tdp.position.line as usize;
         let character = tdp.position.character as usize;
         let path = tdp.text_document.uri.path();
-        let code = match NASLInterpreter::read(path) {
+        let code = match NASLDefinitions::read(path) {
             Ok(c) => Some(c),
             Err(err) => {
                 warn!("unable to load {path}: {err}");
                 None
             }
         }?;
-        let sp = NASLInterpreter::search_parameter(path, &code, line, character)?;
-        let interprets: Vec<NASLInterpreter> =
-            match NASLInterpreter::new_with_includes(path, self.paths.clone(), Some(&code)) {
+        let sp = NASLDefinitions::search_parameter(path, &code, line, character)?;
+        let interprets: Vec<NASLDefinitions> =
+            match NASLDefinitions::new_with_includes(path, self.paths.clone(), Some(&code)) {
                 Ok(i) => {
                     debug!("found {} interpreter", i.len());
                     i
